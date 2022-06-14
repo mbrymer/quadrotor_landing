@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+
+<launch>
+    <!-- Start simulation and spawn quad -->
+    <include file="$(find rotors_gazebo)/launch/mav_landing_sim_joy_height.launch" />
+
+    <!-- Start image_proc and AprilTag nodes-->
+    <!-- Image processing nodelets -->
+    <node pkg="nodelet" type="nodelet" name="image_proc_nodelet_manager" args="manager" />
+
+    <!-- Debayer and rectify -->
+    <node pkg="nodelet" type="nodelet" name="image_proc_debayer" args="load image_proc/debayer image_proc_nodelet_manager">
+        <!-- remap input topics -->
+        <remap from="image_raw" to="drone/camera_sensor/camera_na/image_raw"/>
+
+        <!-- remap output topics -->
+        <remap from="image_mono" to="drone/camera_sensor/camera_na/image_mono"/>
+        <remap from="image_color" to="drone/camera_sensor/camera_na/image_color"/>
+    </node>
+    <node pkg="nodelet" type="nodelet" name="image_proc_rectify" args="load image_proc/rectify image_proc_nodelet_manager" >
+        <!-- remap input topics -->
+        <remap from="image_mono" to="drone/camera_sensor/camera_na/image_mono"/>
+        <remap from="camera_info" to="drone/camera_sensor/camera_na/camera_info"/>
+
+        <!-- remap output topics -->
+        <remap from="image_rect" to="drone/camera_sensor/camera_na/image_rect"/>
+    </node>
+
+    <!-- AprilTag continuous detection -->
+    <include file="$(find quad_state_estimation)/launch/continuous_detection_rotors.launch" />
+
+    <!-- Arm quad -->
+    <node pkg="rostopic" type="rostopic" name="enabled_pub" args="pub drone/enabled std_msgs/Bool True"/>
+    <node pkg="rostopic" type="rostopic" name="landed_pub" args="pub drone/landed std_msgs/Bool False"/>
+
+</launch>
