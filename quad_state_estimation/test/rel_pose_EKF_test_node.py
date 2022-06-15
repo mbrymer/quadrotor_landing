@@ -15,7 +15,7 @@ from tf.transformations import quaternion_from_euler, euler_from_quaternion, qua
 from rel_pose_EKF_test_class import RelativePoseEKF
 
 # Import message types
-from geometry_msgs.msg import Point, Vector3, Quaternion, PoseWithCovarianceStamped
+from geometry_msgs.msg import Point, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped
 from sensor_msgs.msg import Imu
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64
@@ -26,13 +26,13 @@ class RelativePoseEKFNode(object):
         
         # Rates:
         self.update_freq = 100 # Hz
-        self.measurement_freq = 10 # Hz
+        self.measurement_freq = 100 # Hz
 
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
 
         # Subscribers:
-        self.IMU_topic = '/drone/ground_truth/imu'
+        self.IMU_topic = '/drone/imu'
         self.apriltag_topic = 'tag_detections'
 
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
@@ -40,8 +40,10 @@ class RelativePoseEKFNode(object):
 
         # Publishers:
         self.rel_pose_topic = '/state_estimation/rel_pose_state'
+        self.rel_pose_report_topic = 'state_estimation/rel_pose_reported'
         self.IMU_bias_topic = '/state_estimation/IMU_bias'
         self.rel_pose_pub = rospy.Publisher(self.rel_pose_topic,PoseWithCovarianceStamped,queue_size=1)
+        self.rel_pose_report_pub = rospy.Publisher(self.rel_pose_report_topic,PoseStamped,queue_size=1)
         self.IMU_bias_pub = rospy.Publisher(self.IMU_bias_topic,Imu,queue_size=1)
 
         # Timers:
@@ -61,7 +63,7 @@ class RelativePoseEKFNode(object):
             self.rel_pose_ekf.measurement_ready = True
         
             if not self.rel_pose_ekf.state_initialized:
-                self.rel_pose_ekf.initialize_state()
+                self.rel_pose_ekf.initialize_state(False)
             
             self.rel_pose_ekf.apriltag_lock.release()
 
@@ -72,6 +74,7 @@ class RelativePoseEKFNode(object):
         # Publish state estimate
         self.rel_pose_pub.publish(self.rel_pose_ekf.rel_pose_msg)
         self.IMU_bias_pub.publish(self.rel_pose_ekf.IMU_bias_msg)
+        self.rel_pose_report_pub.publish(self.rel_pose_ekf.rel_pose_report_msg)
 
 if __name__ == '__main__':
     try:

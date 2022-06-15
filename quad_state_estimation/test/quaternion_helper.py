@@ -45,6 +45,17 @@ def quaternion_log(unit_quat):
     
     return pure_quat
 
+def quaternion_norm(unit_quat):
+    "Normalize unit length quaternion and clip to single cover range"
+    q_w_lim = -0.75
+
+    unit_quat_norm = unit_quat/np.linalg.norm(unit_quat)
+
+    if unit_quat_norm[3]<q_w_lim:
+        return -unit_quat_norm
+    else:
+        return unit_quat_norm
+
 def skew_symm(vector):
     "Return the 3x3 skew symmetric matrix of a vector"
     skew = np.array([[0,-vector[2],vector[1]],
