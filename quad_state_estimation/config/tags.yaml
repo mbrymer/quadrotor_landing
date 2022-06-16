@@ -50,8 +50,8 @@ tag_bundles:
         [
           # Detection for 41h12 family Apriltag only recognize its central 5*5 pixels,
           # therefore size of big tag = 5/9 * 0.8 = 0.44444444 m
-          {id: 00, size: 0.444, x: 0, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
-          {id: 01, size: 0.0444, x: 0, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1}
+          {id: 00, size: 0.444, x: 0, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1}
+          #{id: 01, size: 0.0444, x: 0, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1}
         ]
     }
   ]
