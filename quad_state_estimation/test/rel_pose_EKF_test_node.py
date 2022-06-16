@@ -26,7 +26,7 @@ class RelativePoseEKFNode(object):
         
         # Rates:
         self.update_freq = 100 # Hz
-        self.measurement_freq = 100 # Hz
+        self.measurement_freq = 10 # Hz
 
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
@@ -60,6 +60,8 @@ class RelativePoseEKFNode(object):
         if len(msg.detections)>0:
             self.rel_pose_ekf.apriltag_lock.acquire()
             self.rel_pose_ekf.apriltag_msg = msg
+            # curr_time = rospy.get_rostime()
+            # rospy.loginfo('Received detection. Header time = {:.3f}, current time = {:.3f}'.format(msg.header.stamp.to_sec(),curr_time.to_sec()))
             self.rel_pose_ekf.measurement_ready = True
         
             if not self.rel_pose_ekf.state_initialized:
