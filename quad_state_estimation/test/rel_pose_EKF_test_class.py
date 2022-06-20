@@ -32,6 +32,7 @@ class RelativePoseEKF(object):
         # Inputs
         self.IMU_msg = Imu()
         self.apriltag_msg = AprilTagDetectionArray()
+        self.magnetometer_msg = Vector3Stamped()
 
         self.apriltag_msg_prev = AprilTagDetectionArray()
 
@@ -50,6 +51,7 @@ class RelativePoseEKF(object):
         self.state_lock = threading.Lock()
         self.imu_lock = threading.Lock()
         self.apriltag_lock = threading.Lock()
+        self.magnetometer_lock = threading.Lock()
 
         # Filter Parameters
         self.update_freq = update_freq
@@ -57,6 +59,8 @@ class RelativePoseEKF(object):
         self.measurement_freq = measurement_freq
         self.upd_per_meas = math.ceil(update_freq/measurement_freq)
         self.est_bias = True
+        self.accel_orien_corr = False
+        self.use_magnetometer = False
 
         # State Storage
         if self.est_bias:
@@ -77,8 +81,10 @@ class RelativePoseEKF(object):
         self.ab_cov_init = 0.5
         self.wb_cov_init = 0.1
 
-        self.Q_a = 0.01*np.eye(3)
-        self.Q_w = 0.01*np.eye(3)
+        # self.Q_a = 0.01*np.eye(3)
+        # self.Q_w = 0.01*np.eye(3)
+        self.Q_a = 0.005*np.eye(3)
+        self.Q_w = 0.0005*np.eye(3)
         self.Q_ab = 5E-5*np.eye(3)
         self.Q_wb = 5E-6*np.eye(3)
 
@@ -91,10 +97,21 @@ class RelativePoseEKF(object):
                         self.ang_cov_init*np.ones(3))))
             self.Q = block_diag(self.Q_a,self.Q_w)
 
-        self.R_r = 0.015*np.eye(3)
-        self.R_ang = 0.05*np.eye(3)
+        # self.R_r = 0.015*np.eye(3)
+        # self.R_ang = 0.05*np.eye(3)
+        self.R_r = np.diag(np.array([0.005,0.005,0.015]))
+        self.R_ang = np.diag(np.array([0.0025,0.0025,0.025]))
+        self.R_acc = 0.05*np.eye(3)
+        self.R_mag = 0.005*np.eye(3)
 
-        self.R = block_diag(self.R_r,self.R_ang)
+        self.b_0 = np.array([[1],[0],[0]]) # Reference magnetic field direction
+
+        if self.accel_orien_corr:
+            self.R = block_diag(self.R_r,self.R_ang,self.R_acc)
+        elif self.use_magnetometer:
+            self.R = block_diag(self.R_r,self.R_ang,self.R_mag)
+        else:
+            self.R = block_diag(self.R_r,self.R_ang)
 
         # Camera to Vehicle Transform
         self.r_v_cv = np.array([[0],[0],[-0.073]])
@@ -134,9 +151,11 @@ class RelativePoseEKF(object):
 
         # Clamp data for this update, decide if correction happens this step
         self.imu_lock.acquire()
+        self.magnetometer_lock.acquire()
         self.apriltag_lock.acquire()
 
         imu_curr = self.IMU_msg
+        mag_curr = self.magnetometer_msg
         if self.measurement_ready and (self.upds_since_correction+1)>=self.upd_per_meas:
             # Extract AprilTag reading, build tag pose matrix
             meas_curr = self.apriltag_msg
@@ -170,6 +189,7 @@ class RelativePoseEKF(object):
             perform_correction = False
 
         self.imu_lock.release()
+        self.magnetometer_lock.release()
         self.apriltag_lock.release()
 
         # Prediction step
@@ -220,20 +240,36 @@ class RelativePoseEKF(object):
             C_check = quaternion_matrix(q_check)[0:3,0:3]
             r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
             q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+            a_obs = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
+                            imu_curr.linear_acceleration.z]).reshape((3,1))
+            b_obs = np.array([mag_curr.vector.x,mag_curr.vector.y,mag_curr.vector.z]).reshape((3,1))
 
             # Calculate observed perturbations in measurements
             delta_r_obs = r_t_vt_obs - r_check
             delta_q_obs = quaternion_multiply(quaternion_conjugate(q_check),q_tv_obs)
             delta_theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+            delta_a_obs = a_obs - (-np.dot(C_check.T,self.g) + ab_check)
+            delta_b_obs = b_obs - np.dot(C_check.T,self.b_0)
 
             # Calculate Jacobians
-            G_k = np.zeros((6,self.num_states))
+            if self.accel_orien_corr:
+                G_k = np.zeros((9,self.num_states))
+
+                G_k[6:9,6:9] = -skew_symm(np.dot(C_check.T,self.g))
+                G_k[6:9,9:12] = np.eye(3)
+                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
+            elif self.use_magnetometer:
+                G_k = np.zeros((9,self.num_states))
+
+                G_k[6:9,6:9] = skew_symm(np.dot(C_check.T,self.b_0))
+                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
+            else:
+                G_k = np.zeros((6,self.num_states))
+                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
 
             G_k[0:3,0:3] = np.eye(3)
             G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check)))
             G_k[3:6,6:9] = np.eye(3)
-
-            N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
 
             R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
 
@@ -241,8 +277,15 @@ class RelativePoseEKF(object):
             Cov_meas_inv = np.linalg.inv(np.linalg.multi_dot((G_k,P_check,G_k.T))+R_k)
             K_k = np.linalg.multi_dot((P_check,G_k.T,Cov_meas_inv))
 
+            if self.accel_orien_corr:
+                delta_y_obs = np.vstack((delta_r_obs,delta_theta_obs,delta_a_obs))
+            elif self.use_magnetometer:
+                delta_y_obs = np.vstack((delta_r_obs,delta_theta_obs,delta_b_obs))
+            else:
+                delta_y_obs = np.vstack((delta_r_obs,delta_theta_obs))
+            
             P_hat = np.dot(np.eye(self.num_states)-np.dot(K_k,G_k),P_check)
-            delta_x_hat = np.dot(K_k,np.vstack((delta_r_obs,delta_theta_obs)))
+            delta_x_hat = np.dot(K_k,delta_y_obs)
 
             # Inject correction update, store and reset error state
             self.r_nom = r_check + delta_x_hat[0:3,0:1]

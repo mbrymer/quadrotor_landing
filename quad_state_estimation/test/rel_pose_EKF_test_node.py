@@ -33,10 +33,12 @@ class RelativePoseEKFNode(object):
 
         # Subscribers:
         self.IMU_topic = '/drone/imu'
+        self.magnetometer_topic = 'drone/fake_magnetometer'
         self.apriltag_topic = 'tag_detections'
 
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)
+        self.magnetometer_sub = rospy.Subscriber(self.magnetometer_topic,Vector3Stamped,callback=self.magnetometer_sub_callback)
 
         # Publishers:
         self.rel_pose_topic = '/state_estimation/rel_pose_state'
@@ -60,6 +62,11 @@ class RelativePoseEKFNode(object):
         self.rel_pose_ekf.IMU_msg = msg
         self.rel_pose_ekf.imu_lock.release()
 
+    def magnetometer_sub_callback(self,msg):
+        self.rel_pose_ekf.magnetometer_lock.acquire()
+        self.rel_pose_ekf.magnetometer_msg = msg
+        self.rel_pose_ekf.magnetometer_lock.release()
+        
     def apriltag_sub_callback(self,msg):
         if len(msg.detections)>0:
             self.rel_pose_ekf.apriltag_lock.acquire()
