@@ -19,7 +19,7 @@ from quaternion_helper import quaternion_exp, skew_symm, quaternion_log, quatern
 from tf.transformations import quaternion_matrix, quaternion_multiply, quaternion_about_axis, quaternion_conjugate, rotation_matrix
 
 # Import message types
-from geometry_msgs.msg import Point, PointStamped, Vector3, Quaternion, PoseWithCovariance, PoseWithCovarianceStamped, Pose, PoseStamped
+from geometry_msgs.msg import Point, PointStamped, Vector3, Vector3Stamped, Quaternion, PoseWithCovariance, PoseWithCovarianceStamped, Pose, PoseStamped
 from sensor_msgs.msg import Imu
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64, Header
@@ -33,10 +33,16 @@ class RelativePoseEKF(object):
         self.IMU_msg = Imu()
         self.apriltag_msg = AprilTagDetectionArray()
 
+        self.apriltag_msg_prev = AprilTagDetectionArray()
+
         # Outputs
         self.rel_pose_msg = PoseWithCovarianceStamped()
+        self.rel_vel_msg = Vector3Stamped()
+        self.rel_accel_msg = Vector3Stamped()
         self.rel_pose_report_msg = PoseStamped()
         self.IMU_bias_msg = Imu()
+        self.pred_length_msg = PointStamped()
+
         self.tf_broadcast = tf.TransformBroadcaster()
         self.tf_listener = tf.TransformListener()
 
@@ -95,6 +101,20 @@ class RelativePoseEKF(object):
         self.q_vc = quaternion_norm(np.array([0.70711,-0.70711,0,0]))
         self.C_vc = quaternion_matrix(self.q_vc)[0:3,0:3]
 
+        # Camera and Tag Parameters
+        self.camera_K = np.array([[241.4268,0,376.5],
+                                    [0,241.4268,240.5],
+                                    [0,0,1]])
+        self.camera_width = 752
+        self.camera_height = 480
+        self.tag_width = 0.8 # m
+        self.tag_in_view_margin = 0.02 # %
+
+        self.tag_corners = np.array([[self.tag_width/2,-self.tag_width/2,-self.tag_width/2,self.tag_width/2],
+                                    [self.tag_width/2,self.tag_width/2,-self.tag_width/2,-self.tag_width/2],
+                                    [0,0,0,0],
+                                    [1,1,1,1]])
+
         # Counters/flags
         self.state_initialized = False
         self.measurement_ready = False
@@ -118,9 +138,34 @@ class RelativePoseEKF(object):
 
         imu_curr = self.IMU_msg
         if self.measurement_ready and (self.upds_since_correction+1)>=self.upd_per_meas:
-            perform_correction = True
+            # Extract AprilTag reading, build tag pose matrix
             meas_curr = self.apriltag_msg
             self.measurement_ready = False
+            r_c_tc = np.array([[meas_curr.detections[0].pose.pose.pose.position.x],
+                                [meas_curr.detections[0].pose.pose.pose.position.y],
+                                [meas_curr.detections[0].pose.pose.pose.position.z]])
+            q_ct = np.array([meas_curr.detections[0].pose.pose.pose.orientation.x,
+                                meas_curr.detections[0].pose.pose.pose.orientation.y,
+                                meas_curr.detections[0].pose.pose.pose.orientation.z,
+                                meas_curr.detections[0].pose.pose.pose.orientation.w])
+            T_ct = quaternion_matrix(q_ct)
+            T_ct[0:3,3:4] = r_c_tc
+            T_ct[3,3] = 1
+
+            # Check criteria for a "good" detection
+            # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
+            tag_corners_c = np.dot(T_ct,self.tag_corners)
+            tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
+            tag_corners_px = np.dot(self.camera_K,tag_corners_c_n[0:3,:])
+
+            min_px = np.min(tag_corners_px[0:2,:],axis=1)
+            max_px = np.max(tag_corners_px[0:2,:],axis=1)
+
+            perform_correction = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+                                min_px[1]>self.camera_height*self.tag_in_view_margin and
+                                max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
+                                max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
+
         else:
             perform_correction = False
 
@@ -134,9 +179,11 @@ class RelativePoseEKF(object):
                             imu_curr.angular_velocity.z]).reshape((3,1))-self.wb_nom)
         C_nom = quaternion_matrix(self.q_nom)[0:3,0:3]
 
+        accel_rel = np.dot(C_nom,a_nom) + self.g
+
         # Propagate nominal state
         r_check = self.r_nom + self.dT*self.v_nom
-        v_check = self.v_nom + self.dT*(np.dot(C_nom,a_nom) + self.g)
+        v_check = self.v_nom + self.dT*accel_rel
         q_check = quaternion_norm(quaternion_multiply(self.q_nom,quaternion_exp(self.dT*w_nom.flatten())))
         ab_check = self.ab_nom
         wb_check = self.wb_nom
@@ -169,14 +216,6 @@ class RelativePoseEKF(object):
 
         if perform_correction:
             # Fuse motion model prediction with AprilTag readings
-            r_c_tc = np.array([[meas_curr.detections[0].pose.pose.pose.position.x],
-                                [meas_curr.detections[0].pose.pose.pose.position.y],
-                                [meas_curr.detections[0].pose.pose.pose.position.z]])
-            q_ct = np.array([meas_curr.detections[0].pose.pose.pose.orientation.x,
-                                meas_curr.detections[0].pose.pose.pose.orientation.y,
-                                meas_curr.detections[0].pose.pose.pose.orientation.z,
-                                meas_curr.detections[0].pose.pose.pose.orientation.w])
-            
             # Convert AprilTag readings to vehicle state coordinates
             C_check = quaternion_matrix(q_check)[0:3,0:3]
             r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
@@ -216,6 +255,9 @@ class RelativePoseEKF(object):
             
             self.cov_pert = P_hat
             self.upds_since_correction = 0
+
+            # Store message
+            self.apriltag_msg_prev = meas_curr
         else:
             # Predictor mode only
             self.r_nom = r_check
@@ -240,7 +282,9 @@ class RelativePoseEKF(object):
         self.IMU_bias_msg = Imu(header=curr_header,
                                 linear_acceleration = Vector3(x=self.ab_nom[0],y=self.ab_nom[1],z=self.ab_nom[2]),
                                 angular_velocity = Vector3(x=self.wb_nom[0],y=self.wb_nom[1],z=self.wb_nom[2]))
-        
+        self.rel_vel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=self.v_nom[0], y=self.v_nom[1], z = self.v_nom[2]))
+        self.rel_accel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=accel_rel[0], y=accel_rel[1], z = accel_rel[2]))
+        self.pred_length_msg = PointStamped(header=curr_header,point = Point(x=self.upds_since_correction))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time,self.pose_frame_name,self.pose_rel_frame_name)
 
         if perform_correction:
