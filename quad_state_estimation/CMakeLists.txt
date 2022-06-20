@@ -166,6 +166,7 @@ include_directories(
 catkin_install_python(PROGRAMS
   test/rel_pose_EKF_test_node.py
   test/tf_extractor_node.py
+  test/fake_magnetometer.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
