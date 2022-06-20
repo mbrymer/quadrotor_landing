@@ -33,4 +33,7 @@
     <node pkg="rostopic" type="rostopic" name="enabled_pub" args="pub drone/enabled std_msgs/Bool True"/>
     <node pkg="rostopic" type="rostopic" name="landed_pub" args="pub drone/landed std_msgs/Bool False"/>
 
+    <!-- Calculate ground truth poses -->
+    <node pkg = "quad_state_estimation" type = "tf_extractor_node.py" name = "tf_extractor_node" />
+
 </launch>
