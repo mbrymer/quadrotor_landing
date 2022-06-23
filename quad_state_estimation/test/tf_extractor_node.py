@@ -34,6 +34,8 @@ if __name__ == '__main__':
     tf_pub_2 = rospy.Publisher(pose_name_2,PoseStamped,queue_size=1)
 
     rate = rospy.Rate(run_rate)
+
+    tf_wait = rospy.Duration(0.25)
         
     rospy.loginfo('TF extractor node started, beginning to publish transforms:')
 
@@ -41,7 +43,7 @@ if __name__ == '__main__':
         curr_time = rospy.get_rostime()
 
         try:
-            (trans_1,rot_1) = tf_listener.lookupTransform(base_frame_1,relative_frame_1,curr_time)
+            (trans_1,rot_1) = tf_listener.lookupTransform(base_frame_1,relative_frame_1,rospy.Time(0))
         except:
             continue
         
@@ -51,7 +53,7 @@ if __name__ == '__main__':
         tf_pub_1.publish(pose_msg_1)
 
         try:
-            (trans_2,rot_2) = tf_listener.lookupTransform(base_frame_2,relative_frame_2,curr_time)
+            (trans_2,rot_2) = tf_listener.lookupTransform(base_frame_2,relative_frame_2,rospy.Time(0))
         except:
             continue
         
