@@ -4,9 +4,6 @@
   <version>0.0.0</version>
   <description>The quad_state_estimation package</description>
 
-  <!-- One maintainer tag required, multiple allowed, one person per tag -->
-  <!-- Example:  -->
-  <!-- <maintainer email="jane.doe@example.com">Jane Doe</maintainer> -->
   <maintainer email="brymer.matt@gmail.com">matt</maintainer>
 
 

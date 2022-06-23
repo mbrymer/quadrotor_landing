@@ -34,8 +34,6 @@ class RelativePoseEKF(object):
         self.apriltag_msg = AprilTagDetectionArray()
         self.magnetometer_msg = Vector3Stamped()
 
-        self.apriltag_msg_prev = AprilTagDetectionArray()
-
         # Outputs
         self.rel_pose_msg = PoseWithCovarianceStamped()
         self.rel_vel_msg = Vector3Stamped()
@@ -299,8 +297,6 @@ class RelativePoseEKF(object):
             self.cov_pert = P_hat
             self.upds_since_correction = 0
 
-            # Store message
-            self.apriltag_msg_prev = meas_curr
         else:
             # Predictor mode only
             self.r_nom = r_check

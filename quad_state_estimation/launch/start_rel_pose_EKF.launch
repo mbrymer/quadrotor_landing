@@ -1,0 +1,6 @@
+<launch>
+
+    <rosparam command="load" file="$(find quad_state_estimation)/config/relative_pose_EKF.yaml"/>
+    <node name="rel_pose_EKF" pkg = "quad_state_estimation" type = "rel_pose_EKF_node"/>
+
+</launch>
