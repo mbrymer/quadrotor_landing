@@ -7,13 +7,13 @@ measurement_freq: 10.0 # Hz
 IMU_topic: "/drone/imu"
 
 # Noise Values
-Q_a_diag: [0.005,0.005,0.005]
-Q_w_diag: [0.0005,0.0005,0.0005]
+Q_a_diag: [0.0005,0.0005,0.0005] # Dropped by an order of magnitude
+Q_w_diag: [0.00005,0.00005,0.00005]
 Q_ab_diag: [5.0E-5,5.0E-5,5.0E-5]
 Q_wb_diag: [5.0E-6,5.0E-6,5.0E-6]
 
-R_r_diag: [0.005,0.005,0.015]
-R_ang_diag: [0.0025,0.0025,0.025]
+R_r_diag: [0.015,0.015,0.020] # 0.005,0.005,0.015
+R_ang_diag: [0.0015,0.0015,0.04] # 0.0025,0.0025,0.025
 
 # Camera Parameters
 r_v_cv: [0,0,-0.073]
