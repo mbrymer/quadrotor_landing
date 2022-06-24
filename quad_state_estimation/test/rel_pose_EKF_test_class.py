@@ -59,6 +59,8 @@ class RelativePoseEKF(object):
         self.est_bias = True
         self.accel_orien_corr = False
         self.use_magnetometer = False
+        self.orien_rate_lim_fact = 20
+        self.orien_rate_lim_tol = 1E-3
 
         # State Storage
         if self.est_bias:
@@ -67,10 +69,13 @@ class RelativePoseEKF(object):
             self.num_states = 9
         self.r_nom = np.zeros((3,1))
         self.v_nom = np.zeros((3,1))
-        self.q_nom = np.zeros(4)
+        self.q_nom = np.array([0,0,0,1])
         self.ab_nom = np.zeros((3,1))
         self.wb_nom = np.zeros((3,1))
         self.cov_pert = np.zeros((self.num_states,self.num_states))
+
+        self.q_int = np.array([0,0,0,1])
+        self.q_ct_last = np.array([0,0,0,1])
 
         # Process and Measurement Noises
         self.r_cov_init = 0.1
@@ -134,6 +139,7 @@ class RelativePoseEKF(object):
         self.state_initialized = False
         self.measurement_ready = False
         self.upds_since_correction = 0
+        self.tag_rate_lim_max_length = 30
 
         # Tolerances and Constants
         self.small_ang_tol = 1E-10
@@ -202,7 +208,9 @@ class RelativePoseEKF(object):
         # Propagate nominal state
         r_check = self.r_nom + self.dT*self.v_nom
         v_check = self.v_nom + self.dT*accel_rel
-        q_check = quaternion_norm(quaternion_multiply(self.q_nom,quaternion_exp(self.dT*w_nom.flatten())))
+        delta_q = quaternion_exp(self.dT*w_nom.flatten())
+        self.q_int = quaternion_norm(quaternion_multiply(self.q_int,delta_q))
+        q_check = quaternion_norm(quaternion_multiply(self.q_nom,delta_q))
         ab_check = self.ab_nom
         wb_check = self.wb_nom
 
@@ -234,9 +242,28 @@ class RelativePoseEKF(object):
 
         if perform_correction:
             # Fuse motion model prediction with AprilTag readings
+
+            # Apply rate limiting to AprilTag readings to filter spurious detections
+            delta_q_ct = quaternion_norm(quaternion_multiply(quaternion_conjugate(self.q_ct_last),q_ct))
+            log_delta_q_ct = quaternion_log(delta_q_ct)
+            log_q_int = quaternion_log(self.q_int)
+            norm_lim = self.orien_rate_lim_fact*np.linalg.norm(log_q_int)
+            norm_des = np.linalg.norm(log_delta_q_ct)
+
+            if self.upds_since_correction < self.tag_rate_lim_max_length and norm_des > max(norm_lim,self.orien_rate_lim_tol):
+                # Do rate limiting
+                sf = norm_lim/norm_des
+                rospy.loginfo("Performed rate limiting at time = {:.3f} s, scale factor = {:.3f}".format(rospy.get_rostime().to_sec(),sf))
+                if sf < 0.02:
+                    huh = 5
+                q_ct_filt = quaternion_norm(quaternion_multiply(self.q_ct_last,quaternion_exp(log_delta_q_ct*norm_lim/norm_des)))
+            else:
+                # No rate limiting
+                q_ct_filt = q_ct
+
             # Convert AprilTag readings to vehicle state coordinates
             C_check = quaternion_matrix(q_check)[0:3,0:3]
-            q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+            q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct_filt)))
             # C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
             r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
             # r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
@@ -299,6 +326,8 @@ class RelativePoseEKF(object):
             
             self.cov_pert = P_hat
             self.upds_since_correction = 0
+            self.q_int = np.array([0,0,0,1])
+            self.q_ct_last = q_ct_filt
 
         else:
             # Predictor mode only
@@ -351,6 +380,7 @@ class RelativePoseEKF(object):
         self.r_nom = -np.dot(self.C_vc,r_c_tc)-self.r_v_cv
         self.v_nom = np.zeros((3,1))
         self.q_nom = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+        self.q_ct_last = q_ct
 
         if reinit_bias:
             self.ab_nom = 0
