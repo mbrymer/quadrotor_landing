@@ -236,8 +236,10 @@ class RelativePoseEKF(object):
             # Fuse motion model prediction with AprilTag readings
             # Convert AprilTag readings to vehicle state coordinates
             C_check = quaternion_matrix(q_check)[0:3,0:3]
-            r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
             q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+            # C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
+            r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
+            # r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
             a_obs = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
                             imu_curr.linear_acceleration.z]).reshape((3,1))
             b_obs = np.array([mag_curr.vector.x,mag_curr.vector.y,mag_curr.vector.z]).reshape((3,1))
@@ -264,9 +266,10 @@ class RelativePoseEKF(object):
             else:
                 G_k = np.zeros((6,self.num_states))
                 N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
+                # N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
 
             G_k[0:3,0:3] = np.eye(3)
-            G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check)))
+            G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
             G_k[3:6,6:9] = np.eye(3)
 
             R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
