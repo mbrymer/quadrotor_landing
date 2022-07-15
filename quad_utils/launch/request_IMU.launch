@@ -1,0 +1,4 @@
+<launch>
+    <node name = "mavcmd_IMU_message" pkg = "mavros" type = "mavcmd"
+    args = "long 511 27 10000 0 0 0 0 0"/>
+</launch>

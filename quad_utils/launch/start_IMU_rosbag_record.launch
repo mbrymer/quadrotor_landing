@@ -1,0 +1,4 @@
+<launch>
+    <node name = "rosbag_imu_record" pkg="rosbag" type ="record"
+    args="record -o /home/$(env USER)/IMU_data /mavros/imu/data_raw" />
+</launch>
