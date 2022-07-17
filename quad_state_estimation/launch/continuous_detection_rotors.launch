@@ -7,10 +7,10 @@
   <arg name="camera_name" default="$(arg mav_name)/camera_sensor/camera_na" />
   <arg name="camera_frame" default="$(arg mav_name)/$(arg camera_type)_optical_link" />
   <arg name="image_topic" default="image_rect" />
-  <arg name="tag_definition_file" default="tags.yaml" />
+  <arg name="tag_definition_file" default="tags_rotors.yaml" />
 
   <!-- Set parameters -->
-  <rosparam command="load" file="$(find quad_state_estimation)/config/apriltag_settings.yaml" ns="$(arg node_namespace)" />
+  <rosparam command="load" file="$(find quad_state_estimation)/config/apriltag_settings_rotors.yaml" ns="$(arg node_namespace)" />
   <rosparam command="load" file="$(find quad_state_estimation)/config/$(arg tag_definition_file)" ns="$(arg node_namespace)" />
   
   <node pkg="apriltag_ros" type="apriltag_ros_continuous_node" name="$(arg node_namespace)" clear_params="true" output="screen" launch-prefix="$(arg launch_prefix)" >

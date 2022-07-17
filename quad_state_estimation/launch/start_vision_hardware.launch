@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+
+<launch>
+    <!-- Start camera -->
+    <include file="$(find pylon_simple_camera)/launch/launch_pylon_camera.launch" />
+
+    <!-- Start image_proc and AprilTag nodes-->
+    <!-- Image processing nodelets -->
+    <node pkg="nodelet" type="nodelet" name="image_proc_nodelet_manager" args="manager" />
+
+    <!-- Debayer and rectify -->
+    <node pkg="nodelet" type="nodelet" name="image_proc_debayer" args="load image_proc/debayer image_proc_nodelet_manager">
+        <!-- remap input topics -->
+        <remap from="image_raw" to="basler_camera/image_raw"/>
+
+        <!-- remap output topics -->
+        <remap from="image_mono" to="basler_camera/image_mono"/>
+        <remap from="image_color" to="basler_camera/image_color"/>
+    </node>
+    <node pkg="nodelet" type="nodelet" name="image_proc_rectify" args="load image_proc/rectify image_proc_nodelet_manager" >
+        <!-- remap input topics -->
+        <remap from="image_mono" to="basler_camera/image_mono"/>
+        <remap from="camera_info" to="basler_camera/camera_info"/>
+
+        <!-- remap output topics -->
+        <remap from="image_rect" to="basler_camera/image_rect"/>
+    </node>
+
+    <!-- AprilTag continuous detection -->
+    <!-- AprilTag -->
+	<arg name="launch_prefix" default="" />
+  	<arg name="node_namespace" default="apriltag_ros_continuous_node" />
+  	<arg name="camera_name" default="/basler_camera" />
+  	<arg name="image_topic" default="image_rect" />
+
+	<!-- Set parameters -->
+  	<rosparam command="load" file="$(find quad_state_estimation)/config/apriltag_settings_hardware.yaml" ns="$(arg node_namespace)" />
+  	<rosparam command="load" file="$(find quad_state_estimation)/config/tags_hardware.yaml" ns="$(arg node_namespace)" />
+
+  	<node pkg="nodelet" type="nodelet" name="apriltag_ros_continuous_node" clear_params="true" output="screen" args="load apriltag_ros/ContinuousDetector image_proc_nodelet_manager">
+	
+    	<!-- Remap topics from those used in code to those on the ROS network -->
+    	<remap from="image_rect" to="$(arg camera_name)/$(arg image_topic)" />
+    	<remap from="camera_info" to="$(arg camera_name)/camera_info" />
+
+    	<param name="publish_tag_detections_image" type="bool" value="true" />      <!-- default: false -->
+  	</node>
+
+</launch>

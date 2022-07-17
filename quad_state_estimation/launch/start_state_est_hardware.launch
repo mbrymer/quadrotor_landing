@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+
+<launch>
+
+    <!-- Launch relative pose EKF -->
+    <include file="$(find quad_state_estimation)/launch/start_rel_pose_EKF.launch" >
+        <arg name="EKF_params" value="relative_pose_EKF_hardware.yaml"/>
+    </include>
+
+</launch>
