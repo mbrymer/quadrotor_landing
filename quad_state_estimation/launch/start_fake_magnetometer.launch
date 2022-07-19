@@ -1,0 +1,5 @@
+<launch>
+
+    <node name="fake_magnetometer" pkg = "quad_state_estimation" type = "fake_magnetometer.py"/>
+
+</launch>

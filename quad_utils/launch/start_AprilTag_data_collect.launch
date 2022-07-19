@@ -1,0 +1,4 @@
+<launch>
+    <node name = "rosbag_apriltag_record" pkg="rosbag" type ="record"
+    args="record -o /home/$(env USER)/AprilTag_data /tag_detections /tag_detections_image" />
+</launch>

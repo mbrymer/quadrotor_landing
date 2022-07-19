@@ -1,0 +1,5 @@
+<launch>
+
+    <node name="rel_pose_EKF" pkg = "quad_state_estimation" type = "rel_pose_EKF_test_node.py"/>
+
+</launch>

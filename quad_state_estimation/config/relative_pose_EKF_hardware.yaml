@@ -1,0 +1,32 @@
+# Relative Pose EKF Parameters
+# Rates
+update_freq: 100.0 # Hz
+measurement_freq: 10.0 # Hz
+
+# Topics
+IMU_topic: "/mavros/imu/data_raw"
+
+# Noise Values
+Q_a_diag: [0.00025,0.00025,0.00025] # Allan deviation for IMU noise with no motors running
+Q_w_diag: [0.00045,0.00045,0.00045]
+Q_ab_diag: [7.0E-6,7.0E-6,7.0E-6]
+Q_wb_diag: [4.4E-5,4.4E-5,4.4E-5]
+
+R_r_diag: [0.0015,0.0015,0.006] # Small tag at ~1.5 m
+R_ang_diag: [0.0015,0.0015,0.04] #
+
+# Camera Parameters
+# Intrinsics ref: camera_calibration_2022-07-14-16-58-26_640x480_mono-camchain.yaml
+camera_K: [448.24317239815787,0,325.2550869383401,0,447.88113349903773,242.3517901446831,0,0,1]
+camera_width: 640.0
+camera_height: 480.0
+tag_width: 0.199375
+tag_in_view_margin: 0.02
+
+# Extrinsics ref:IMU_camera_cal_2022-07-16-22-48-49_640x480_clip-camchain-imucam.yaml
+r_v_cv: [0.06036412,-0.00145196,-0.04439579]
+q_vc: [-0.7035177, 0.7106742, 0.0014521, -0.0017207]
+
+# Flags/Options
+limit_measurement_freq: False
+est_bias: True

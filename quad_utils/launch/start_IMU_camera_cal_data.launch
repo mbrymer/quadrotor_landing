@@ -1,0 +1,7 @@
+<launch>
+    <node name = "mavcmd_IMU_message" pkg = "mavros" type = "mavcmd"
+    args = "long 511 27 5000 0 0 0 0 0"/>
+
+    <node name = "rosbag_imu_record" pkg="rosbag" type ="record"
+    args="record -o /home/$(env USER)/IMU_camera_cal /mavros/imu/data_raw /basler_camera/image_mono" />
+</launch>

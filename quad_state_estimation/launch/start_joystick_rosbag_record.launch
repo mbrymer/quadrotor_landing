@@ -1,0 +1,4 @@
+<launch>
+    <node name = "rosbag_joystick_record" pkg="rosbag" type ="record"
+    args="record -o /home/$(env USER)/EKF_JoystickInputs_Test /drone/joy" />
+</launch>

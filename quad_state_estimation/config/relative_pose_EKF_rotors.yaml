@@ -1,0 +1,30 @@
+# Relative Pose EKF Parameters
+# Rates
+update_freq: 100.0 # Hz
+measurement_freq: 10.0 # Hz
+
+# Topics
+IMU_topic: "/drone/imu"
+
+# Noise Values
+Q_a_diag: [0.0005,0.0005,0.0005] # Dropped by an order of magnitude
+Q_w_diag: [0.00005,0.00005,0.00005]
+Q_ab_diag: [5.0E-5,5.0E-5,5.0E-5]
+Q_wb_diag: [5.0E-6,5.0E-6,5.0E-6]
+
+R_r_diag: [0.015,0.015,0.020] # 0.005,0.005,0.015
+R_ang_diag: [0.0015,0.0015,0.04] # 0.0025,0.0025,0.025
+
+# Camera Parameters
+r_v_cv: [0,0,-0.073]
+q_vc: [0.70711,-0.70711,0,0]
+
+camera_K: [241.4268,0,376.5,0,241.4268,240.5,0,0,1]
+camera_width: 752
+camera_height: 480
+tag_width: 0.8
+tag_in_view_margin: 0.02
+
+# Flags/Options
+limit_measurement_freq: True
+est_bias: True
