@@ -9,7 +9,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
 {
     // Load parameters
     node.param<std::string>("IMU_topic",IMU_topic,"/drone/imu");
-    node.param<std::string>("apriltag_topic",apriltag_topic,"tag_detections");
+    node.param<std::string>("apriltag_topic",apriltag_topic,"/tag_detections");
     node.param<std::string>("rel_pose_topic",rel_pose_topic,"/state_estimation/rel_pose_state");
     node.param<std::string>("rel_pose_report_topic",rel_pose_report_topic,"/state_estimation/rel_pose_reported");
     node.param<std::string>("rel_vel_topic",rel_vel_topic,"/state_estimation/rel_pose_velocity");
@@ -85,10 +85,10 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_pose_ekf.q_vc = Eigen::Quaterniond(q_vc.data());
     quaternion_norm(rel_pose_ekf.q_vc);
 
-    node.param<int>("camera_width",rel_pose_ekf.camera_width);
-    node.param<int>("camera_height",rel_pose_ekf.camera_height);
-    node.param<double>("tag_width",rel_pose_ekf.tag_width);
-    node.param<double>("tag_in_view_margin",rel_pose_ekf.tag_in_view_margin,0.02);
+    node.getParam("camera_width",rel_pose_ekf.camera_width);
+    node.getParam("camera_height",rel_pose_ekf.camera_height);
+    node.getParam("tag_width",rel_pose_ekf.tag_width);
+    node.getParam("tag_in_view_margin",rel_pose_ekf.tag_in_view_margin);
 
     std::vector<double> camera_K;
     node.getParam("camera_K",camera_K);

@@ -119,6 +119,8 @@ void RelativePoseEKF::filter_update()
     if (!state_initialized)
         return;
     
+    // std::cout << "Starting filter update" << std::endl;
+
     // Clamp data, decide if should do correction
     mtx_IMU.lock();
     mtx_apriltag.lock();
@@ -155,6 +157,8 @@ void RelativePoseEKF::filter_update()
                             min_px(1)>camera_height*tag_in_view_margin &&
                             max_px(0)<camera_width*(1-tag_in_view_margin) &&
                             max_px(1)<camera_height*(1-tag_in_view_margin));
+
+        // std::cout << "Perform correction: " << std::to_string(perform_correction) << std::endl;
 
     }
 

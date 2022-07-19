@@ -8,7 +8,7 @@
 int main(int argc, char **argv)
 {
     ros::init(argc,argv,"relative_pose_EKF");
-    ros::NodeHandle EKF_nh;
+    ros::NodeHandle EKF_nh("~");
 
     RelativePoseEKFNode rel_pose_EKF(EKF_nh);
 
