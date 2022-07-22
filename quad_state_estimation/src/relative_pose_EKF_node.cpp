@@ -32,7 +32,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     apriltag_sub = node.subscribe(apriltag_topic,1, &RelativePoseEKFNode::AprilTagSubCallback,this);
 
     rel_pose_pub = node.advertise<geometry_msgs::PoseWithCovarianceStamped>(rel_pose_topic,1);
-    rel_pose_report_pub = node.advertise<geometry_msgs::PoseWithCovarianceStamped>(rel_pose_report_topic,1);
+    rel_pose_report_pub = node.advertise<geometry_msgs::PoseStamped>(rel_pose_report_topic,1);
     rel_vel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_vel_topic,1);
     rel_accel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_accel_topic,1);
     IMU_bias_pub = node.advertise<sensor_msgs::Imu>(IMU_bias_topic,1);

@@ -1,4 +1,4 @@
 <launch>
     <node name = "rosbag_quad_data_record" pkg="rosbag" type ="record"
-    args="record -o /home/$(env USER)/quad_data /state_estimation/rel_pose_state /state_estimation/IMU_bias /tag_detections /tag_detections_image  /state_estimation/rel_pose_velocity /state_estimation/rel_pose_acceleration /state_estimation/upds_since_correction tf /mavros/imu/data_raw" />
+    args="record -o /home/$(env USER)/quad_data /state_estimation/rel_pose_state /state_estimation/IMU_bias /tag_detections /tag_detections_image  /state_estimation/rel_pose_velocity /state_estimation/rel_pose_acceleration /state_estimation/upds_since_correction /state_estimation/rel_pose_reported /tf /mavros/imu/data_raw" />
 </launch>
