@@ -1,0 +1,4 @@
+<launch>
+    <node name = "rosbag_EKF_debug_record" pkg="rosbag" type ="record"
+    args="record -o /home/$(env USER)/EKF_Python_Replay /state_estimation/rel_pose_state /state_estimation/IMU_bias /mavros/imu/data_raw /tag_detections /state_estimation/rel_pose_velocity /state_estimation/rel_pose_acceleration /state_estimation/upds_since_correction /state_estimation/rel_pose_reported" />
+</launch>
