@@ -26,7 +26,7 @@ class RelativePoseEKFNode(object):
         
         # Rates:
         self.update_freq = 100 # Hz
-        self.measurement_freq = 10 # Hz
+        self.measurement_freq = 2 # Hz
 
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
@@ -34,7 +34,7 @@ class RelativePoseEKFNode(object):
         # Subscribers:
         self.IMU_topic = '/drone/imu'
         self.magnetometer_topic = 'drone/fake_magnetometer'
-        self.apriltag_topic = 'tag_detections'
+        self.apriltag_topic = '/tag_detections'
 
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)

@@ -72,6 +72,9 @@ class RelativePoseEKF(object):
         self.wb_nom = np.zeros((3,1))
         self.cov_pert = np.zeros((self.num_states,self.num_states))
 
+        self.ab_const = np.array([0.324,0.078,-0.1])
+        self.wb_const = np.array([-0.019,-0.013,0])
+
         # Process and Measurement Noises
         self.r_cov_init = 0.1
         self.v_cov_init = 0.1
@@ -81,7 +84,12 @@ class RelativePoseEKF(object):
 
         # self.Q_a = 0.01*np.eye(3)
         # self.Q_w = 0.01*np.eye(3)
-        self.Q_a = 0.005*np.eye(3)
+
+        # self.Q_a = 0.00025*np.eye(3) # Hardware values
+        # self.Q_w = 0.00045*np.eye(3) # 0.0005
+        # self.Q_ab = 7.0E-6*np.eye(3) # 5E-5
+        # self.Q_wb = 5.0E-6*np.eye(3) # 5E-6
+        self.Q_a = 0.005*np.eye(3) # Sim values
         self.Q_w = 0.0005*np.eye(3)
         self.Q_ab = 5E-5*np.eye(3)
         self.Q_wb = 5E-6*np.eye(3)
@@ -97,7 +105,9 @@ class RelativePoseEKF(object):
 
         # self.R_r = 0.015*np.eye(3)
         # self.R_ang = 0.05*np.eye(3)
-        self.R_r = np.diag(np.array([0.005,0.005,0.015]))
+        # self.R_r =  np.diag(np.array([0.0015,0.0015,0.006])) # Hardware values
+        # self.R_ang = np.diag(np.array([0.0015,0.0015,0.04])) # 
+        self.R_r = np.diag(np.array([0.005,0.005,0.015])) # Sim Values
         self.R_ang = np.diag(np.array([0.0025,0.0025,0.025]))
         self.R_acc = 0.05*np.eye(3)
         self.R_mag = 0.005*np.eye(3)
@@ -112,17 +122,24 @@ class RelativePoseEKF(object):
             self.R = block_diag(self.R_r,self.R_ang)
 
         # Camera to Vehicle Transform
-        self.r_v_cv = np.array([[0],[0],[-0.073]])
-        self.q_vc = quaternion_norm(np.array([0.70711,-0.70711,0,0]))
+        # self.r_v_cv = np.array([[0.06036412],[-0.00145196],[-0.04439579]]) # Harware values
+        self.r_v_cv = np.array([[0],[0],[-0.073]]) # Sim Values
+        # self.q_vc = quaternion_norm(np.array([-0.7035177, 0.7106742, 0.0014521, -0.0017207])) # Hardware values
+        self.q_vc = quaternion_norm(np.array([0.70711,-0.70711,0,0])) # Sim values
         self.C_vc = quaternion_matrix(self.q_vc)[0:3,0:3]
 
         # Camera and Tag Parameters
         self.camera_K = np.array([[241.4268,0,376.5],
                                     [0,241.4268,240.5],
-                                    [0,0,1]])
-        self.camera_width = 752
+                                    [0,0,1]]) # Sim values
+        # self.camera_K = np.array([[448.24317239815787,0,325.2550869383401],
+        #                             [0,447.88113349903773,242.3517901446831],
+        #                             [0,0,1]]) # Hardware values
+        # self.camera_width = 640 # Hardware
+        self.camera_width = 752 # Sim values
         self.camera_height = 480
-        self.tag_width = 0.8 # m
+        # self.tag_width = 0.199375 # Hardware # m
+        self.tag_width = 0.8 # Sim
         self.tag_in_view_margin = 0.02 # %
 
         self.tag_corners = np.array([[self.tag_width/2,-self.tag_width/2,-self.tag_width/2,self.tag_width/2],
@@ -232,14 +249,15 @@ class RelativePoseEKF(object):
         # Propagate covariance
         P_check = np.linalg.multi_dot((F_km1,self.cov_pert,F_km1.T)) + np.linalg.multi_dot((W_km1,self.Q,W_km1.T))
 
+
         if perform_correction:
             # Fuse motion model prediction with AprilTag readings
             # Convert AprilTag readings to vehicle state coordinates
             C_check = quaternion_matrix(q_check)[0:3,0:3]
             q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
-            # C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
-            r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
-            # r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
+            C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
+            # r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
+            r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
             a_obs = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
                             imu_curr.linear_acceleration.z]).reshape((3,1))
             b_obs = np.array([mag_curr.vector.x,mag_curr.vector.y,mag_curr.vector.z]).reshape((3,1))
@@ -266,10 +284,10 @@ class RelativePoseEKF(object):
             else:
                 G_k = np.zeros((6,self.num_states))
                 N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
-                # N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
+                N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
 
             G_k[0:3,0:3] = np.eye(3)
-            G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
+            # G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
             G_k[3:6,6:9] = np.eye(3)
 
             R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
