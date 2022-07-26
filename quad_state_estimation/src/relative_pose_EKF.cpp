@@ -29,6 +29,7 @@ RelativePoseEKF::RelativePoseEKF()
     t_last_update = 0;
     est_bias = true;
     limit_measurement_freq = false;
+    corner_margin_enbl = true;
     num_states = 15;
 
     // Process and Measurement Noises
@@ -134,7 +135,7 @@ void RelativePoseEKF::filter_update()
 
     bool perform_correction = false;
 
-    if (measurement_ready && (upds_since_correction+1)>=upd_per_meas)
+    if (measurement_ready && ((upds_since_correction+1)>=upd_per_meas || !limit_measurement_freq))
     {
         // Perform measurement update. Extract AprilTag reading and build pose matrix
         r_c_tc = apriltag_pos;
@@ -143,21 +144,28 @@ void RelativePoseEKF::filter_update()
 
         T_ct = Eigen::Translation3d(r_c_tc)*q_ct;
 
-        // Check criteria for a "good" detection
-        // Project tag corners to pixel coordinates, verify they have some margin to the edge of the image
-        Eigen::MatrixXd tag_corners_c = T_ct*tag_corners;
-        Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
-        Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
-        Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
+        if (corner_margin_enbl)
+        {
+            // Check criteria for a "good" detection
+            // Project tag corners to pixel coordinates, verify they have some margin to the edge of the image
+            Eigen::MatrixXd tag_corners_c = T_ct*tag_corners;
+            Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
+            Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
+            Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
 
-        Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
-        Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
+            Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
+            Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
 
-        perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
-                            min_px(1)>camera_height*tag_in_view_margin &&
-                            max_px(0)<camera_width*(1-tag_in_view_margin) &&
-                            max_px(1)<camera_height*(1-tag_in_view_margin));
-
+            perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
+                                min_px(1)>camera_height*tag_in_view_margin &&
+                                max_px(0)<camera_width*(1-tag_in_view_margin) &&
+                                max_px(1)<camera_height*(1-tag_in_view_margin));
+        }
+        else
+        {
+            perform_correction = true;
+        }
+        
         // std::cout << "Perform correction: " << std::to_string(perform_correction) << std::endl;
 
     }

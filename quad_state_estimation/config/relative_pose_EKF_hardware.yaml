@@ -29,4 +29,5 @@ q_vc: [-0.7035177, 0.7106742, 0.0014521, -0.0017207]
 
 # Flags/Options
 limit_measurement_freq: False
+corner_margin_enbl: False
 est_bias: True

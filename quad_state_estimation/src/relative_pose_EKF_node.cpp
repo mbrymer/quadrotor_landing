@@ -46,6 +46,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
+    node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;
