@@ -9,7 +9,6 @@ Panels:
         - /TF1
         - /TF1/Frames1
         - /TF1/Tree1
-        - /TF1/Tree1/world1
       Splitter Ratio: 0.7117646932601929
     Tree Height: 783
   - Class: rviz/Selection
@@ -81,12 +80,14 @@ Visualization Manager:
           Value: false
         drone/rotor_3:
           Value: false
+        tag_0:
+          Value: false
+        tag_1:
+          Value: false
         target/base_link:
           Value: false
         target/tag_link:
           Value: true
-        target_tags:
-          Value: false
         world:
           Value: true
       Marker Scale: 1
@@ -102,7 +103,9 @@ Visualization Manager:
             drone/camera_sensor/camera_na_link:
               drone/camera_sensor/camera_na_optical_link:
                 {}
-              target_tags:
+              tag_0:
+                {}
+              tag_1:
                 {}
             drone/rotor_0:
               {}

@@ -26,7 +26,7 @@ class RelativePoseEKFNode(object):
         
         # Rates:
         self.update_freq = 100 # Hz
-        self.measurement_freq = 2 # Hz
+        self.measurement_freq = 10 # Hz
 
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)

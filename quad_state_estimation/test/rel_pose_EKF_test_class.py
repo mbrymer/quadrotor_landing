@@ -10,6 +10,7 @@ from cmath import pi
 
 # Import libraries
 import sys, copy, threading, math
+
 import rospy
 import numpy as np
 import tf
@@ -132,6 +133,9 @@ class RelativePoseEKF(object):
         self.camera_K = np.array([[241.4268,0,376.5],
                                     [0,241.4268,240.5],
                                     [0,0,1]]) # Sim values
+        # self.camera_K = np.array([[447.28985914852296, 0, 320.5],
+        #                             [0, 447.28985914852296, 240.5],
+        #                             [0,0,1]]) # Sim hardwareish values
         # self.camera_K = np.array([[448.24317239815787,0,325.2550869383401],
         #                             [0,447.88113349903773,242.3517901446831],
         #                             [0,0,1]]) # Hardware values
@@ -141,6 +145,18 @@ class RelativePoseEKF(object):
         # self.tag_width = 0.199375 # Hardware # m
         self.tag_width = 0.8 # Sim
         self.tag_in_view_margin = 0.02 # %
+        self.tag_min_px_width = 30
+
+        # self.tag_ids = np.array([0,1]) # Baseline recursive tag
+        # self.tag_widths = np.array([0.8,0.08])
+        # self.tag_positions = np.array([[0,0,0],
+        #                                 [0,0,0]])
+        
+        self.tag_ids = np.array([0,1,2,3,4,5,6,7,8]) # Bundle tag
+        self.tag_widths = np.array([0.0667,0.1333,0.1333,0.1333,0.1333,0.2666,0.2666,0.2666,0.2666])
+        self.tag_positions = np.array([[0,0,0],
+                                        [0,0.15,0], [0.15,0,0], [0,-0.15,0], [-0.15,0,0],
+                                        [-0.233275,0.233275,0],[0.233275,0.233275,0],[0.233275,-0.233275,0],[-0.233275,-0.233275,0]])
 
         self.tag_corners = np.array([[self.tag_width/2,-self.tag_width/2,-self.tag_width/2,self.tag_width/2],
                                     [self.tag_width/2,self.tag_width/2,-self.tag_width/2,-self.tag_width/2],
@@ -172,33 +188,66 @@ class RelativePoseEKF(object):
         imu_curr = self.IMU_msg
         mag_curr = self.magnetometer_msg
         if self.measurement_ready and (self.upds_since_correction+1)>=self.upd_per_meas:
-            # Extract AprilTag reading, build tag pose matrix
+            # Extract AprilTag readings
             meas_curr = self.apriltag_msg
             self.measurement_ready = False
-            r_c_tc = np.array([[meas_curr.detections[0].pose.pose.pose.position.x],
-                                [meas_curr.detections[0].pose.pose.pose.position.y],
-                                [meas_curr.detections[0].pose.pose.pose.position.z]])
-            q_ct = np.array([meas_curr.detections[0].pose.pose.pose.orientation.x,
-                                meas_curr.detections[0].pose.pose.pose.orientation.y,
-                                meas_curr.detections[0].pose.pose.pose.orientation.z,
-                                meas_curr.detections[0].pose.pose.pose.orientation.w])
-            T_ct = quaternion_matrix(q_ct)
-            T_ct[0:3,3:4] = r_c_tc
-            T_ct[3,3] = 1
+            perform_correction = False
 
-            # Check criteria for a "good" detection
-            # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
-            tag_corners_c = np.dot(T_ct,self.tag_corners)
-            tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
-            tag_corners_px = np.dot(self.camera_K,tag_corners_c_n[0:3,:])
+            # Storage for measurements of valid tags
+            r_c_pc = np.zeros([3,self.tag_ids.size])
+            q_cp = np.zeros([4,self.tag_ids.size])
+            inds_tags_valid = []
+            n_tags_valid = 0
 
-            min_px = np.min(tag_corners_px[0:2,:],axis=1)
-            max_px = np.max(tag_corners_px[0:2,:],axis=1)
+            for detection in meas_curr.detections:
+                inds_detect = np.argwhere(detection.id == self.tag_ids)
+                if not (inds_detect.size > 0):
+                    continue
+                ind_detect = inds_detect[0][0]
 
-            perform_correction = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
-                                min_px[1]>self.camera_height*self.tag_in_view_margin and
-                                max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
-                                max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
+                r_c_pc_meas = np.array([[detection.pose.pose.pose.position.x],
+                                    [detection.pose.pose.pose.position.y],
+                                    [detection.pose.pose.pose.position.z]])
+                q_cp_meas = np.array([detection.pose.pose.pose.orientation.x,
+                                    detection.pose.pose.pose.orientation.y,
+                                    detection.pose.pose.pose.orientation.z,
+                                    detection.pose.pose.pose.orientation.w])
+                T_ct = quaternion_matrix(q_cp_meas)
+                T_ct[0:3,3:4] = r_c_pc_meas
+                T_ct[3,3] = 1
+
+                # Check criteria for a "good" detection
+                # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
+                tag_half_width = self.tag_widths[ind_detect]/2
+                tag_corners = np.array([[tag_half_width,-tag_half_width,-tag_half_width,tag_half_width],
+                                    [tag_half_width,tag_half_width,-tag_half_width,-tag_half_width],
+                                    [0,0,0,0],
+                                    [1,1,1,1]])
+                tag_corners_c = np.dot(T_ct,tag_corners)
+                tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
+                tag_corners_px = np.dot(self.camera_K,tag_corners_c_n[0:3,:])
+
+                width_top = np.linalg.norm(tag_corners_px[0:2,0]-tag_corners_px[0:2,1])
+                width_left = np.linalg.norm(tag_corners_px[0:2,1]-tag_corners_px[0:2,2])
+                width_bott = np.linalg.norm(tag_corners_px[0:2,2]-tag_corners_px[0:2,3])
+                width_right = np.linalg.norm(tag_corners_px[0:2,3]-tag_corners_px[0:2,0])
+
+                min_px = np.min(tag_corners_px[0:2,:],axis=1)
+                max_px = np.max(tag_corners_px[0:2,:],axis=1)
+
+                tag_valid = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+                                    min_px[1]>self.camera_height*self.tag_in_view_margin and
+                                    max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
+                                    max_px[1]<self.camera_height*(1-self.tag_in_view_margin) and
+                            min(width_top,width_left,width_bott,width_right)>self.tag_min_px_width)
+
+                if tag_valid:
+                    # Store tag for use in correction step
+                    r_c_pc[:,n_tags_valid:n_tags_valid+1] = r_c_pc_meas
+                    q_cp[:,n_tags_valid:n_tags_valid+1] = q_cp_meas.reshape((4,1))
+                    n_tags_valid += 1
+                    inds_tags_valid.append(ind_detect)
+                    perform_correction = True
 
         else:
             perform_correction = False
@@ -249,48 +298,67 @@ class RelativePoseEKF(object):
         # Propagate covariance
         P_check = np.linalg.multi_dot((F_km1,self.cov_pert,F_km1.T)) + np.linalg.multi_dot((W_km1,self.Q,W_km1.T))
 
-
         if perform_correction:
             # Fuse motion model prediction with AprilTag readings
-            # Convert AprilTag readings to vehicle state coordinates
-            C_check = quaternion_matrix(q_check)[0:3,0:3]
-            q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
-            C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
-            # r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
-            r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
-            a_obs = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
-                            imu_curr.linear_acceleration.z]).reshape((3,1))
-            b_obs = np.array([mag_curr.vector.x,mag_curr.vector.y,mag_curr.vector.z]).reshape((3,1))
+            # Convert AprilTag readings to vehicle state coordinates for valid tags observed this timestep
+            # Build measured perturbation vector
+            delta_r_obs = np.zeros((3*n_tags_valid,1))
+            delta_theta_obs = np.zeros((3*n_tags_valid,1))
 
-            # Calculate observed perturbations in measurements
-            delta_r_obs = r_t_vt_obs - r_check
-            delta_q_obs = quaternion_multiply(quaternion_conjugate(q_check),q_tv_obs)
-            delta_theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+            for i in range(n_tags_valid):
+                # Calculate observed perturbations in measurements
+                C_check = quaternion_matrix(q_check)[0:3,0:3]
+                q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_cp[:,i])))
+                r_c_pc_check = -np.linalg.multi_dot((self.C_vc.T,C_check,r_check+self.tag_positions[inds_tags_valid[i],:].reshape((3,1)))) - np.dot(self.C_vc.T,self.r_v_cv)
+
+                delta_r_obs[3*i:3*(i+1),0]  = r_c_pc[:,i] - r_c_pc_check.flatten()
+                delta_q_obs = quaternion_multiply(quaternion_conjugate(q_check),q_tv_obs)
+                delta_theta_obs[3*i:3*(i+1),0] = quaternion_log(delta_q_obs)
+            
+            # Acceleration and magnetic field measurements if these modes are enabled
+            a_obs = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
+                imu_curr.linear_acceleration.z]).reshape((3,1))
+            b_obs = np.array([mag_curr.vector.x,mag_curr.vector.y,mag_curr.vector.z]).reshape((3,1))
             delta_a_obs = a_obs - (-np.dot(C_check.T,self.g) + ab_check)
             delta_b_obs = b_obs - np.dot(C_check.T,self.b_0)
 
             # Calculate Jacobians
-            if self.accel_orien_corr:
-                G_k = np.zeros((9,self.num_states))
+            G_k = np.zeros((6*n_tags_valid,self.num_states))
+            N_k = np.zeros((6*n_tags_valid,6*n_tags_valid))
 
-                G_k[6:9,6:9] = -skew_symm(np.dot(C_check.T,self.g))
-                G_k[6:9,9:12] = np.eye(3)
-                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
-            elif self.use_magnetometer:
-                G_k = np.zeros((9,self.num_states))
+            # Add a set of 6 rows for each valid tag
+            for i in range(n_tags_valid):
+                # Position measurement
+                G_k[3*i:3*(i+1),0:3] = -np.dot(self.C_vc.T,C_check.T)
+                G_k[3*i:3*(i+1),6:9] = -np.dot(self.C_vc.T,skew_symm(np.dot(C_check.T,r_check+self.tag_positions[inds_tags_valid[i],:].reshape((3,1)))))
 
-                G_k[6:9,6:9] = skew_symm(np.dot(C_check.T,self.b_0))
-                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
-            else:
-                G_k = np.zeros((6,self.num_states))
-                N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
-                N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
+                # Orientation measurement
+                G_k[3*i+3*n_tags_valid:3*(i+1)+3*n_tags_valid,6:9] = np.eye(3)
 
-            G_k[0:3,0:3] = np.eye(3)
-            # G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
-            G_k[3:6,6:9] = np.eye(3)
+            # Sensor noise
+            N_k = block_diag(np.eye(3*n_tags_valid),*([self.C_vc]*n_tags_valid))
 
-            R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
+            # if self.accel_orien_corr:
+            #     G_k = np.zeros((9,self.num_states))
+
+            #     G_k[6:9,6:9] = -skew_symm(np.dot(C_check.T,self.g))
+            #     G_k[6:9,9:12] = np.eye(3)
+            #     N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
+            # elif self.use_magnetometer:
+            #     G_k = np.zeros((9,self.num_states))
+
+            #     G_k[6:9,6:9] = skew_symm(np.dot(C_check.T,self.b_0))
+            #     N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc,np.eye(3))
+            # else:
+            #     G_k = np.zeros((6,self.num_states))
+            #     N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
+            #     N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
+
+            # G_k[0:3,0:3] = np.eye(3)
+            # # G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
+            # G_k[3:6,6:9] = np.eye(3)
+
+            R_k = np.linalg.multi_dot((N_k,block_diag(*([self.R_r]*n_tags_valid+[self.R_ang]*n_tags_valid)),N_k.T))
 
             # Form Kalman Gain and execute correction step
             Cov_meas_inv = np.linalg.inv(np.linalg.multi_dot((G_k,P_check,G_k.T))+R_k)
@@ -307,6 +375,8 @@ class RelativePoseEKF(object):
             delta_x_hat = np.dot(K_k,delta_y_obs)
 
             # Inject correction update, store and reset error state
+            if n_tags_valid>1:
+                check_it = 1
             self.r_nom = r_check + delta_x_hat[0:3,0:1]
             self.v_nom = v_check + delta_x_hat[3:6,0:1]
             self.q_nom = quaternion_norm(quaternion_multiply(q_check,quaternion_exp(delta_x_hat[6:9].flatten())))
@@ -347,34 +417,74 @@ class RelativePoseEKF(object):
         self.pred_length_msg = PointStamped(header=curr_header,point = Point(x=self.upds_since_correction))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time,self.pose_frame_name,self.pose_rel_frame_name)
 
-        if perform_correction:
-            self.rel_pose_report_msg = PoseStamped(header=curr_header,
-            pose = Pose(position = Point(x=r_t_vt_obs[0],y=r_t_vt_obs[1],z=r_t_vt_obs[2]),
-                            orientation = Quaternion(x=q_tv_obs[0],y=q_tv_obs[1],z=q_tv_obs[2],w=q_tv_obs[3])))
-            self.tf_broadcast.sendTransform((tuple(r_t_vt_obs)), (tuple(q_tv_obs)), curr_time,self.pose_report_frame_name,self.pose_rel_frame_name)
+        # if perform_correction:
+        #     self.rel_pose_report_msg = PoseStamped(header=curr_header,
+        #     pose = Pose(position = Point(x=r_t_vt_obs[0],y=r_t_vt_obs[1],z=r_t_vt_obs[2]),
+        #                     orientation = Quaternion(x=q_tv_obs[0],y=q_tv_obs[1],z=q_tv_obs[2],w=q_tv_obs[3])))
+        #     self.tf_broadcast.sendTransform((tuple(r_t_vt_obs)), (tuple(q_tv_obs)), curr_time,self.pose_report_frame_name,self.pose_rel_frame_name)
 
     def initialize_state(self,reinit_bias):
         "Initialize state to last received AprilTag relative pose detection"
         self.state_lock.acquire()
         
-        # Assume identity rotation to start. Will need to initialize this based on GPS in real implementation for stability most likely
-        r_c_tc = np.array([[self.apriltag_msg.detections[0].pose.pose.pose.position.x],
-                                [self.apriltag_msg.detections[0].pose.pose.pose.position.y],
-                                [self.apriltag_msg.detections[0].pose.pose.pose.position.z]])
-        q_ct = np.array([self.apriltag_msg.detections[0].pose.pose.pose.orientation.x,
-                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.y,
-                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.z,
-                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.w])
-        
-        self.r_nom = -np.dot(self.C_vc,r_c_tc)-self.r_v_cv
-        self.v_nom = np.zeros((3,1))
-        self.q_nom = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+        # Check if any of received tags are valid, initialize state with first valid one
+        # Skip initialization if no valid tags
+        for detection in self.apriltag_msg.detections:
+            inds_detect = np.argwhere(detection.id == self.tag_ids)
+            if not (inds_detect.size > 0):
+                continue
+            ind_detect = inds_detect[0][0]
 
-        if reinit_bias:
-            self.ab_nom = 0
-            self.wb_nom = 0
+            r_c_pc_meas = np.array([[detection.pose.pose.pose.position.x],
+                                [detection.pose.pose.pose.position.y],
+                                [detection.pose.pose.pose.position.z]])
+            q_cp_meas = np.array([detection.pose.pose.pose.orientation.x,
+                                detection.pose.pose.pose.orientation.y,
+                                detection.pose.pose.pose.orientation.z,
+                                detection.pose.pose.pose.orientation.w])
+            T_ct = quaternion_matrix(q_cp_meas)
+            T_ct[0:3,3:4] = r_c_pc_meas
+            T_ct[3,3] = 1
 
-        self.cov_pert = self.cov_init
+            # Check criteria for a "good" detection
+            # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
+            tag_half_width = self.tag_widths[ind_detect]/2
+            tag_corners = np.array([[tag_half_width,-tag_half_width,-tag_half_width,tag_half_width],
+                                [tag_half_width,tag_half_width,-tag_half_width,-tag_half_width],
+                                [0,0,0,0],
+                                [1,1,1,1]])
+            tag_corners_c = np.dot(T_ct,tag_corners)
+            tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
+            tag_corners_px = np.dot(self.camera_K,tag_corners_c_n[0:3,:])
 
-        self.state_initialized = True
+            width_top = np.linalg.norm(tag_corners_px[0:2,0]-tag_corners_px[0:2,1])
+            width_left = np.linalg.norm(tag_corners_px[0:2,1]-tag_corners_px[0:2,2])
+            width_bott = np.linalg.norm(tag_corners_px[0:2,2]-tag_corners_px[0:2,3])
+            width_right = np.linalg.norm(tag_corners_px[0:2,3]-tag_corners_px[0:2,0])
+
+            min_px = np.min(tag_corners_px[0:2,:],axis=1)
+            max_px = np.max(tag_corners_px[0:2,:],axis=1)
+
+            tag_valid = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+                                min_px[1]>self.camera_height*self.tag_in_view_margin and
+                                max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
+                                max_px[1]<self.camera_height*(1-self.tag_in_view_margin) and
+                        min(width_top,width_left,width_bott,width_right)>self.tag_min_px_width)
+                        
+            if tag_valid:
+                # Initialize state from first valid tag
+                self.q_nom = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_cp_meas)))
+                C_cp_meas = quaternion_matrix(q_cp_meas)[0:3,0:3]
+
+                self.r_nom = -np.dot(C_cp_meas.T,r_c_pc_meas)-np.linalg.multi_dot((C_cp_meas.T,self.C_vc.T,self.r_v_cv))+self.tag_positions[ind_detect,:].reshape((3,1))
+                self.v_nom = np.zeros((3,1))
+
+                if reinit_bias:
+                    self.ab_nom = 0
+                    self.wb_nom = 0
+
+                self.cov_pert = self.cov_init
+                self.state_initialized = True
+                break
+                
         self.state_lock.release()

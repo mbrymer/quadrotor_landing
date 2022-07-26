@@ -3,9 +3,9 @@
   <arg name="node_namespace" default="apriltag_ros_continuous_node" />
   <arg name="mav_name" default="drone" />
 
-  <arg name="camera_type" value="camera_sensor" />
+  <arg name="camera_type" value="camera_na" />
   <arg name="camera_name" default="$(arg mav_name)/camera_sensor/camera_na" />
-  <arg name="camera_frame" default="$(arg mav_name)/$(arg camera_type)_optical_link" />
+  <arg name="camera_frame" default="$(arg mav_name)/camera_sensor/$(arg camera_type)_optical_link" />
   <arg name="image_topic" default="image_rect" />
   <arg name="tag_definition_file" default="tags_rotors.yaml" />
 
