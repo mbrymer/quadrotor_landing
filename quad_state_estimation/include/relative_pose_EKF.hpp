@@ -60,6 +60,8 @@ class RelativePoseEKF
         
         bool est_bias;
         bool limit_measurement_freq;
+        bool corner_margin_enbl;
+        bool direct_orien_method;
 
         int upd_per_meas;
         int num_states;

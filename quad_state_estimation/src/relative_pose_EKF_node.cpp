@@ -32,7 +32,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     apriltag_sub = node.subscribe(apriltag_topic,1, &RelativePoseEKFNode::AprilTagSubCallback,this);
 
     rel_pose_pub = node.advertise<geometry_msgs::PoseWithCovarianceStamped>(rel_pose_topic,1);
-    rel_pose_report_pub = node.advertise<geometry_msgs::PoseWithCovarianceStamped>(rel_pose_report_topic,1);
+    rel_pose_report_pub = node.advertise<geometry_msgs::PoseStamped>(rel_pose_report_topic,1);
     rel_vel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_vel_topic,1);
     rel_accel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_accel_topic,1);
     IMU_bias_pub = node.advertise<sensor_msgs::Imu>(IMU_bias_topic,1);
@@ -46,6 +46,8 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
+    node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
+    node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;

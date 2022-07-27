@@ -27,4 +27,6 @@ tag_in_view_margin: 0.02
 
 # Flags/Options
 limit_measurement_freq: True
+corner_margin_enbl: True
 est_bias: True
+direct_orien_method: True
