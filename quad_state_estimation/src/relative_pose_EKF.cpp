@@ -135,7 +135,7 @@ void RelativePoseEKF::filter_update()
 
     bool perform_correction = false;
 
-    if (measurement_ready && ((upds_since_correction+1)>=upd_per_meas || !limit_measurement_freq))
+    if (measurement_ready && (!limit_measurement_freq || (upds_since_correction+1)>=upd_per_meas))
     {
         // Perform measurement update. Extract AprilTag reading and build pose matrix
         r_c_tc = apriltag_pos;
@@ -147,19 +147,30 @@ void RelativePoseEKF::filter_update()
         if (corner_margin_enbl)
         {
             // Check criteria for a "good" detection
-            // Project tag corners to pixel coordinates, verify they have some margin to the edge of the image
-            Eigen::MatrixXd tag_corners_c = T_ct*tag_corners;
-            Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
-            Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
-            Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
+            // Project tag corners to pixel coordinates, verify that at least one has some margin to the edge of the image
+            for (int i=0;i<n_tags;++i)
+            {
+                Eigen::Matrix4d tag_corners_curr;
+                tag_corners_curr << tag_widths(i)/2+tag_positions(0,i), -tag_widths(i)/2+tag_positions(0,i), -tag_widths(i)/2+tag_positions(0,i), tag_widths(i)/2+tag_positions(0,i),
+                    tag_widths(i)/2+tag_positions(1,i), tag_widths(i)/2+tag_positions(1,i), -tag_widths(i)/2+tag_positions(1,i), -tag_widths(i)/2+tag_positions(1,i),
+                    0,0,0,0,
+                    1,1,1,1;
+                Eigen::MatrixXd tag_corners_c = T_ct*tag_corners_curr;
+                Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
+                Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
+                Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
 
-            Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
-            Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
+                Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
+                Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
 
-            perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
-                                min_px(1)>camera_height*tag_in_view_margin &&
-                                max_px(0)<camera_width*(1-tag_in_view_margin) &&
-                                max_px(1)<camera_height*(1-tag_in_view_margin));
+                perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
+                                    min_px(1)>camera_height*tag_in_view_margin &&
+                                    max_px(0)<camera_width*(1-tag_in_view_margin) &&
+                                    max_px(1)<camera_height*(1-tag_in_view_margin));
+                if (perform_correction)
+                    break;
+            }
+            
         }
         else
         {

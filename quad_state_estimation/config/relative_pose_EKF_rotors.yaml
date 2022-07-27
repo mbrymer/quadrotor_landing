@@ -23,7 +23,21 @@ camera_K: [241.4268,0,376.5,0,241.4268,240.5,0,0,1]
 camera_width: 752
 camera_height: 480
 tag_width: 0.8
-tag_in_view_margin: 0.02
+tag_in_view_margin: 0.00
+
+n_tags: 9 # 1
+# Add 20% margin so outer white border is just visible
+# [0.0667,0.1333,0.2666]
+tag_widths: [0.0800,0.15996,0.15996,0.15996,0.15996,0.31992,0.31992,0.31992,0.31992] # [0.8]
+tag_positions: [0,0,0,
+                0,0.15,0,
+                0.15,0,0,
+                0,-0.15,0,
+                -0.15,0,0
+                -0.23375, 0.23375,0
+                0.23375, 0.23375,0
+                0.23375, -0.23375,0
+                -0.23375, -0.23375,0] # [0,0,0]
 
 # Flags/Options
 limit_measurement_freq: True

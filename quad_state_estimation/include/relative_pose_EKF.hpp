@@ -93,9 +93,14 @@ class RelativePoseEKF
         Eigen::Matrix3d camera_K;
         int camera_width;
         int camera_height;
+
+        // Target Configuration
+        int n_tags;
         double tag_width;
         double tag_in_view_margin;
         Eigen::Matrix4d tag_corners;
+        Eigen::VectorXd tag_widths;
+        Eigen::MatrixXd tag_positions;
 
         // Counters/flags
         bool state_initialized;

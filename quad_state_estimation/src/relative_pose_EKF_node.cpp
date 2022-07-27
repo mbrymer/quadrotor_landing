@@ -90,10 +90,27 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.getParam("camera_height",rel_pose_ekf.camera_height);
     node.getParam("tag_width",rel_pose_ekf.tag_width);
     node.getParam("tag_in_view_margin",rel_pose_ekf.tag_in_view_margin);
+    node.getParam("n_tags",rel_pose_ekf.n_tags);
 
     std::vector<double> camera_K;
     node.getParam("camera_K",camera_K);
     rel_pose_ekf.camera_K = Eigen::Matrix3d(camera_K.data()).transpose();
+
+    std::vector<double> tag_widths;
+    std::vector<double> tag_positions;
+
+    node.getParam("tag_widths",tag_widths);
+    node.getParam("tag_positions",tag_positions);
+
+    rel_pose_ekf.tag_widths = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(tag_widths.data(),tag_widths.size());
+    rel_pose_ekf.tag_positions.resize(3,rel_pose_ekf.n_tags); // Brute force copy
+    for (int i = 0; i<3; ++i)
+    {
+        for (int j = 0; j<rel_pose_ekf.n_tags; ++j)
+        {
+            rel_pose_ekf.tag_positions(i,j) = tag_positions[3*i+j];
+        }
+    }
 
     rel_pose_ekf.initialize_params();
 

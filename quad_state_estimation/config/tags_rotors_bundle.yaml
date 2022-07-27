@@ -20,15 +20,15 @@
 standalone_tags:
   [
     # Real life sizes 
-    {id: 0, size: 0.0667, name: tag_0},
-    {id: 1, size: 0.1333, name: tag_1},
-    {id: 2, size: 0.1333, name: tag_2},
-    {id: 3, size: 0.1333, name: tag_3},
-    {id: 4, size: 0.1333, name: tag_4},
-    {id: 5, size: 0.2666, name: tag_5},
-    {id: 6, size: 0.2666, name: tag_6},
-    {id: 7, size: 0.2666, name: tag_7},
-    {id: 8, size: 0.2666, name: tag_8}
+    # {id: 0, size: 0.0667, name: tag_0},
+    # {id: 1, size: 0.1333, name: tag_1},
+    # {id: 2, size: 0.1333, name: tag_2},
+    # {id: 3, size: 0.1333, name: tag_3},
+    # {id: 4, size: 0.1333, name: tag_4},
+    # {id: 5, size: 0.2666, name: tag_5},
+    # {id: 6, size: 0.2666, name: tag_6},
+    # {id: 7, size: 0.2666, name: tag_7},
+    # {id: 8, size: 0.2666, name: tag_8}
   ]
 # ## Tag bundle definitions
 # ### Remarks
@@ -53,19 +53,19 @@ standalone_tags:
 #   ]
 tag_bundles:
   [
-    # {
-    #   name: "target_bundle",
-    #   layout:
-    #   [
-    #     {id: 0, size: 0.06985, x: 0, y: 0, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 1, size: 0.1397, x: 0, y: 0.1571625, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 2, size: 0.1397, x: 0.1571625, y: 0, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 3, size: 0.1397, x: 0, y: -0.1571625, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 4, size: 0.1397, x: -0.1571625, y: 0, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 5, size: 0.2794, x: 0.244475, y: 0.244475, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 6, size: 0.2794, x: 0.244475, y: -0.244475, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 7, size: 0.2794, x: -0.244475, y: -0.244475, z: 0, qw: 1, qx: 0, qy: 0, qz: 0},
-    #     {id: 8, size: 0.2794, x: -0.244475, y: 0.244475, z: 0, qw: 1, qx: 0, qy: 0, qz: 0}
-    #   ]
-    # }
+    {
+      name: "target_bundle",
+      layout:
+      [
+        {id: 0, size: 0.0667, x: 0, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 1, size: 0.1333, x: 0, y: 0.15, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 2, size: 0.1333, x: 0.15, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 3, size: 0.1333, x: 0, y: -0.15, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 4, size: 0.1333, x: -0.15, y: 0, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 5, size: 0.2666, x: 0.23375, y: 0.23375, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 6, size: 0.2666, x: 0.23375, y: -0.23375, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 7, size: 0.2666, x: -0.23375, y: -0.23375, z: 0, qw: 0, qx: 0, qy: 0, qz: 1},
+        {id: 8, size: 0.2666, x: -0.23375, y: 0.23375, z: 0, qw: 0, qx: 0, qy: 0, qz: 1}
+      ]
+    }
   ]
