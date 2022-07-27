@@ -1,5 +1,5 @@
 <launch>
-    <arg name="EKF_params" default="relative_pose_EKF_rotors.yaml" />
+    <arg name="EKF_params" default="relative_pose_EKF_hardware.yaml" />
 
     <node name="rel_pose_EKF" pkg = "quad_state_estimation" type = "rel_pose_EKF_node" output="screen" clear_params="true">
         <rosparam command="load" file="$(find quad_state_estimation)/config/$(arg EKF_params)"/>

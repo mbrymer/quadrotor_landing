@@ -21,10 +21,10 @@ camera_K: [437.3412312213781,0,328.5442810236917,0,438.0867474272743,239.2536470
 camera_width: 640.0
 camera_height: 480.0
 tag_width: 0 # 0.199375
-tag_in_view_margin: 0.02
+tag_in_view_margin: 0.00
 
 n_tags: 9
-tag_widths: [0.06985,0.1397,0.1397,0.1397,0.1397,0.2794,0.2794,0.2794,0.2794]
+tag_widths: [0.08382,0.16764,0.16764,0.16764,0.16764,0.33528,0.33528,0.33528,0.33528] # 20% margin on tag dimension to leave white border
 tag_positions: [0,0,0,
                 0,0.1571625,0,
                 0.1571625,0,0,
@@ -41,5 +41,5 @@ q_vc: [-0.7035177, 0.7106742, 0.0014521, -0.0017207]
 
 # Flags/Options
 limit_measurement_freq: False
-corner_margin_enbl: False
+corner_margin_enbl: True
 est_bias: True
