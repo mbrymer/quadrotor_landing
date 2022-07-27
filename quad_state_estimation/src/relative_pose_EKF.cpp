@@ -30,6 +30,7 @@ RelativePoseEKF::RelativePoseEKF()
     est_bias = true;
     limit_measurement_freq = false;
     corner_margin_enbl = true;
+    direct_orien_method = false;
     num_states = 15;
 
     // Process and Measurement Noises
@@ -135,7 +136,7 @@ void RelativePoseEKF::filter_update()
 
     bool perform_correction = false;
 
-    if (measurement_ready && ((upds_since_correction+1)>=upd_per_meas || !limit_measurement_freq))
+    if (measurement_ready && (!limit_measurement_freq || (upds_since_correction+1)>=upd_per_meas))
     {
         // Perform measurement update. Extract AprilTag reading and build pose matrix
         r_c_tc = apriltag_pos;
@@ -235,10 +236,21 @@ void RelativePoseEKF::filter_update()
         // Convert AprilTag readings to vehicle state coordinates
         Eigen::MatrixXd C_check = q_check.toRotationMatrix();
         Eigen::MatrixXd C_check_T = C_check.transpose();
-        r_t_vt_obs = -(q_check*T_vc*r_c_tc.homogeneous());
         q_tv_obs = (q_vc*q_ct).conjugate();
         quaternion_norm(q_tv_obs);
 
+        if (direct_orien_method)
+        {
+            // Directly use reported orientation from AprilTag when calculating observed position
+            // Removes sensitivity to predicted orientation, but also removes ability for position measurements to influence orientation
+            r_t_vt_obs = -(q_tv_obs*T_vc*r_c_tc.homogeneous());
+        }
+        else
+        {
+            // Linearize about predicted orientation as conventional EKF. More information about orientation but sensitive to q_check
+            r_t_vt_obs = -(q_check*T_vc*r_c_tc.homogeneous());
+        }
+        
         // Calculate observed perturbations in measurements
         Eigen::VectorXd delta_r_obs = r_t_vt_obs - r_check;
         Eigen::Quaterniond delta_q_obs = q_check.conjugate()*q_tv_obs;
@@ -248,13 +260,20 @@ void RelativePoseEKF::filter_update()
         // Calculate Jacobians
         Eigen::MatrixXd G_k = Eigen::MatrixXd::Zero(6,num_states);
         G_k(seq(0,2),seq(0,2)) = Eigen::MatrixXd::Identity(3,3);
-        G_k(seq(0,2),seq(6,8)) = C_check*skew_symm(C_check_T*r_check);
+        if (!direct_orien_method)
+        {
+            G_k(seq(0,2),seq(6,8)) = C_check*skew_symm(C_check_T*r_check);
+        }
         G_k(seq(3,5),seq(6,8)) = Eigen::MatrixXd::Identity(3,3);
         Eigen::MatrixXd G_k_T = G_k.transpose();
 
         Eigen::MatrixXd N_k = Eigen::MatrixXd::Zero(6,6);
         N_k << -C_check*C_vc, Eigen::MatrixXd::Zero(3,3),
                 Eigen::MatrixXd::Zero(3,3), C_vc;
+        if (direct_orien_method)
+        {
+            N_k(seq(0,2),seq(3,5)) = skew_symm(r_check);
+        }
         
         Eigen::MatrixXd N_k_T = N_k.transpose();
         

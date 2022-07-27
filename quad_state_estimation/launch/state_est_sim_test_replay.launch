@@ -4,7 +4,7 @@
     <!-- Start simulation and spawn quad -->
     <include file="$(find rotors_gazebo)/launch/mav_landing_sim_joy_height.launch" />
 
-    Start image_proc and AprilTag nodes
+    <!-- Start image_proc and AprilTag nodes -->
     <!-- Image processing nodelets -->
     <node pkg="nodelet" type="nodelet" name="image_proc_nodelet_manager" args="manager" />
 

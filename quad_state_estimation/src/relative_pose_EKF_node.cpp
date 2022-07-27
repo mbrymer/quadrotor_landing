@@ -47,6 +47,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
     node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
+    node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;
