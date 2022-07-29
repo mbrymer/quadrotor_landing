@@ -6,7 +6,7 @@
 #include "relative_pose_EKF.hpp"
 
 RelativePoseEKF::RelativePoseEKF()
-{   
+{
     // Default values for parameters
     IMU_accel = Eigen::VectorXd::Zero(3);
     IMU_ang_vel = Eigen::VectorXd::Zero(3);
@@ -20,6 +20,8 @@ RelativePoseEKF::RelativePoseEKF()
     q_nom = Eigen::Quaterniond::Identity();
     ab_nom = Eigen::VectorXd::Zero(3);
     wb_nom = Eigen::VectorXd::Zero(3);
+    ab_static = Eigen::VectorXd::Zero(3);
+    wb_static = Eigen::VectorXd::Zero(3);
     r_t_vt_obs = Eigen::VectorXd::Zero(3);
     q_tv_obs = Eigen::Quaterniond::Identity();
 
@@ -38,7 +40,7 @@ RelativePoseEKF::RelativePoseEKF()
     Q_w = 0.0005*Eigen::VectorXd::Ones(3);
     Q_ab = 5E-5*Eigen::VectorXd::Ones(3);
     Q_wb = 5E-6*Eigen::VectorXd::Ones(3);
-    
+
     R_r = Eigen::VectorXd::Zero(3);
     R_ang = Eigen::VectorXd::Zero(3);
     R_r << 0.005, 0.005, 0.015;
@@ -74,7 +76,7 @@ RelativePoseEKF::RelativePoseEKF()
 }
 
 void RelativePoseEKF::initialize_params()
-{   
+{
     // Filter parameters
     dT_nom = 1/update_freq;
     upd_per_meas = int(ceil(update_freq/measurement_freq));
@@ -84,14 +86,14 @@ void RelativePoseEKF::initialize_params()
     Eigen::VectorXd Q_stack;
     Eigen::VectorXd cov_init_stack(num_states);
     if (est_bias)
-    {   
+    {
         Q_stack = Eigen::VectorXd::Zero(Q_a.size()+Q_w.size()+Q_ab.size()+Q_wb.size());
         Q_stack << Q_a, Q_w, Q_ab, Q_wb;
         cov_init_stack << r_cov_init * Eigen::VectorXd::Ones(3), v_cov_init * Eigen::VectorXd::Ones(3),
         ang_cov_init * Eigen::VectorXd::Ones(3), ab_cov_init * Eigen::VectorXd::Ones(3), wb_cov_init * Eigen::VectorXd::Ones(3);
     }
     else
-    {   
+    {
         Q_stack = Eigen::VectorXd::Zero(Q_a.size()+Q_w.size());
         Q_stack << Q_a, Q_w;
         cov_init_stack << r_cov_init * Eigen::VectorXd::Ones(3), v_cov_init * Eigen::VectorXd::Ones(3),
@@ -120,7 +122,7 @@ void RelativePoseEKF::filter_update()
 {
     if (!state_initialized)
         return;
-    
+
     // std::cout << "Starting filter update" << std::endl;
 
     // Clamp data, decide if should do correction
@@ -166,7 +168,7 @@ void RelativePoseEKF::filter_update()
         {
             perform_correction = true;
         }
-        
+
         // std::cout << "Perform correction: " << std::to_string(perform_correction) << std::endl;
 
     }
@@ -176,8 +178,8 @@ void RelativePoseEKF::filter_update()
 
     // Prediction step
     double dT = dT_nom; // TODO: Make this dynamic
-    Eigen::VectorXd a_nom = IMU_accel_curr - ab_nom;
-    Eigen::VectorXd w_nom = IMU_ang_vel_curr - wb_nom;
+    Eigen::VectorXd a_nom = IMU_accel_curr - ab_nom - ab_static;
+    Eigen::VectorXd w_nom = IMU_ang_vel_curr - wb_nom - wb_static;
     Eigen::MatrixXd C_nom = q_nom.toRotationMatrix();
 
     accel_rel = C_nom*a_nom + g;
@@ -229,7 +231,7 @@ void RelativePoseEKF::filter_update()
     Eigen::MatrixXd F_km1_T = F_km1.transpose();
     Eigen::MatrixXd W_km1_T = W_km1.transpose();
     Eigen::MatrixXd P_check = F_km1*cov_pert*F_km1_T+W_km1*Q*W_km1_T;
-    
+
     if (perform_correction)
     {
         // Fuse motion model prediction with AprilTag readings
@@ -250,7 +252,7 @@ void RelativePoseEKF::filter_update()
             // Linearize about predicted orientation as conventional EKF. More information about orientation but sensitive to q_check
             r_t_vt_obs = -(q_check*T_vc*r_c_tc.homogeneous());
         }
-        
+
         // Calculate observed perturbations in measurements
         Eigen::VectorXd delta_r_obs = r_t_vt_obs - r_check;
         Eigen::Quaterniond delta_q_obs = q_check.conjugate()*q_tv_obs;
@@ -274,9 +276,9 @@ void RelativePoseEKF::filter_update()
         {
             N_k(seq(0,2),seq(3,5)) = skew_symm(r_check);
         }
-        
+
         Eigen::MatrixXd N_k_T = N_k.transpose();
-        
+
         Eigen::MatrixXd R_k = N_k*R*N_k_T;
 
         // Form Kalman Gain and execute correction step
@@ -289,7 +291,7 @@ void RelativePoseEKF::filter_update()
         Eigen::VectorXd delta_x_hat = K_k*delta_y_obs;
 
         // Inject correction update, store and reset error state
-        // Perturbation state delta x = 
+        // Perturbation state delta x =
         // [delta r_x/y/z, delta v_x/y/z, delta theta_x/y/z, delta a_bias_x/y/z, delta w_bias_x/y/z ]
         r_nom = r_check + delta_x_hat(seq(0,2));
         v_nom = v_check + delta_x_hat(seq(3,5));
@@ -349,5 +351,5 @@ void RelativePoseEKF::initialize_state(bool reinit_bias)
 
     state_initialized = true;
     mtx_state.unlock();
-    
+
 }

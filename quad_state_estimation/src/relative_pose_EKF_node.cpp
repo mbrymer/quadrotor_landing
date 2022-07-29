@@ -78,6 +78,14 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<double>("ab_cov_init",rel_pose_ekf.ab_cov_init,0.5);
     node.param<double>("wb_cov_init",rel_pose_ekf.wb_cov_init,0.1);
 
+    std::vector<double> ab_static;
+    std::vector<double> wb_static;
+
+    node.getParam("accel_bias_static",ab_static);
+    node.getParam("gyro_bias_static",wb_static);
+    rel_pose_ekf.ab_static = Eigen::Vector3d(ab_static.data());
+    rel_pose_ekf.wb_static = Eigen::Vector3d(wb_static.data());
+
     std::vector<double> r_v_cv;
     std::vector<double> q_vc;
 
@@ -159,7 +167,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         rel_pose_msg.pose.pose.orientation.x = rel_pose_ekf.q_nom.x();
         rel_pose_msg.pose.pose.orientation.y = rel_pose_ekf.q_nom.y();
         rel_pose_msg.pose.pose.orientation.z = rel_pose_ekf.q_nom.z();
-        
+
         Eigen::MatrixXd pose_cov(6,6);
         pose_cov << rel_pose_ekf.cov_pert(seq(0,2),seq(0,2)),rel_pose_ekf.cov_pert(seq(0,2),seq(6,8)),
         rel_pose_ekf.cov_pert(seq(6,8),seq(0,2)),rel_pose_ekf.cov_pert(seq(6,8),seq(6,8));
@@ -196,7 +204,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         geometry_msgs::PointStamped pred_length_msg;
         pred_length_msg.header = new_header;
         pred_length_msg.point.x = rel_pose_ekf.upds_since_correction;
-        
+
         // Publish messages
         rel_pose_pub.publish(rel_pose_msg);
         IMU_bias_pub.publish(IMU_bias_msg);
@@ -234,5 +242,5 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
 
         }
     }
-    
+
 }

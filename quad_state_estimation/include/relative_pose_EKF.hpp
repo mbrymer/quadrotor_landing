@@ -31,7 +31,7 @@ class RelativePoseEKF
         std::mutex mtx_IMU;
         std::mutex mtx_apriltag;
         std::mutex mtx_state;
-        
+
         // Storage
         // Inputs
         Eigen::VectorXd IMU_accel;
@@ -49,6 +49,9 @@ class RelativePoseEKF
         Eigen::VectorXd wb_nom;
         Eigen::MatrixXd cov_pert;
 
+        Eigen::VectorXd ab_static;
+        Eigen::VectorXd wb_static;
+
         Eigen::VectorXd r_t_vt_obs;
         Eigen::Quaterniond q_tv_obs;
 
@@ -57,7 +60,7 @@ class RelativePoseEKF
         double dT_nom;
         double measurement_freq;
         double t_last_update;
-        
+
         bool est_bias;
         bool limit_measurement_freq;
         bool corner_margin_enbl;

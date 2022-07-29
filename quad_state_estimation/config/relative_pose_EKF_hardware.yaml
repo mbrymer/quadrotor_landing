@@ -15,6 +15,9 @@ Q_wb_diag: [4.4E-5,4.4E-5,4.4E-5]
 R_r_diag: [0.0015,0.0015,0.006] # Small tag at ~1.5 m
 R_ang_diag: [0.0015,0.0015,0.04] #
 
+accel_bias_static: [0.15,-0.13,-0.12]
+gyro_bias_static: [-0.04,-0.02,0.0]
+
 # Camera Parameters
 # Intrinsics ref: camera_calibration_2022-07-22-11-23-46_640x480_mono-camchain.yaml
 camera_K: [437.3412312213781,0,328.5442810236917,0,438.0867474272743,239.2536470406629,0,0,1]
