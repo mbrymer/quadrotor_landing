@@ -21,10 +21,12 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<std::string>("pose_report_frame_name",pose_report_frame_name,"drone/rel_pose_report");
 
     double measurement_freq;
+    double measurement_delay;
     bool limit_measurement_freq;
 
     node.param<double>("update_freq",update_freq,100.0);
     node.param<double>("measurement_freq",measurement_freq,10.0);
+    node.param<double>("measurement_delay",measurement_delay,0.010);
     node.param<bool>("limit_measurement_freq",limit_measurement_freq,false);
 
     // Set publishers, subscribers and timers
@@ -43,11 +45,13 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     // Initialize EKF
     rel_pose_ekf.update_freq = update_freq;
     rel_pose_ekf.measurement_freq = measurement_freq;
+    rel_pose_ekf.measurement_delay = measurement_delay;
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
     node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
     node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
+    node.param<bool>("multirate_ekf",rel_pose_ekf.multirate_ekf,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;

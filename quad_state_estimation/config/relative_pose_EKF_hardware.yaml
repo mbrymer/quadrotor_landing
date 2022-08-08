@@ -2,6 +2,7 @@
 # Rates
 update_freq: 100.0 # Hz
 measurement_freq: 100.0 # Hz
+measurement_delay: 0.150 # s
 
 # Topics
 IMU_topic: "/mavros/imu/data_raw"
@@ -35,3 +36,4 @@ limit_measurement_freq: False
 corner_margin_enbl: False
 est_bias: True
 direct_orien_method: True
+multirate_ekf: True

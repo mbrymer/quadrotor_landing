@@ -81,3 +81,18 @@ Eigen::MatrixXd skew_symm(Eigen::VectorXd vector)
     
     return mat;
 }
+
+// Return the 4x1 vector corresponding to a quaternion
+Eigen::VectorXd quat_to_vec(Eigen::Quaterniond quaternion)
+{
+    Eigen::VectorXd vec = Eigen::VectorXd::Zero(4);
+    vec << quaternion.x(),quaternion.y(),quaternion.z(),quaternion.w();
+    return vec;
+}
+
+// Return the quaternion corresponding to a 4x1 vector
+Eigen::Quaterniond vec_to_quat(Eigen::VectorXd vec)
+{
+    Eigen::Quaterniond quat(vec(3),vec(0),vec(1),vec(2));
+    return quat;
+}

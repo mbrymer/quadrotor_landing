@@ -11,6 +11,8 @@
 #include <Eigen/Core>
 
 #include <math.h>
+#include <algorithm>
+#include <vector>
 #include <quaternion_helper.hpp>
 
 using Eigen::seq;
@@ -55,19 +57,27 @@ class RelativePoseEKF
         Eigen::VectorXd r_t_vt_obs;
         Eigen::Quaterniond q_tv_obs;
 
+        // Multirate EKF
+        std::vector<Eigen::VectorXd> x_hist;
+        std::vector<Eigen::VectorXd> u_hist;
+        std::vector<Eigen::MatrixXd> P_hist;
+
         // Filter Parameters
         double update_freq;
         double dT_nom;
         double measurement_freq;
+        double measurement_delay;
         double t_last_update;
 
         bool est_bias;
         bool limit_measurement_freq;
         bool corner_margin_enbl;
         bool direct_orien_method;
+        bool multirate_ekf;
 
         int upd_per_meas;
         int num_states;
+        int measurement_step_delay;
 
         // Process and Measurement Noises
         double r_cov_init;
@@ -111,6 +121,14 @@ class RelativePoseEKF
         // Tolerances and constants
         double small_ang_tol;
         Eigen::Vector3d g;
+
+    private:
+        // Prediction step of EKF
+        void prediction_step(Eigen::VectorXd x_km1, Eigen::MatrixXd P_km1, Eigen::VectorXd u,
+                            Eigen::VectorXd &x_check, Eigen::MatrixXd &P_check, Eigen::VectorXd &pose_accel);
+        // Correction step of EKF
+        void correction_step(Eigen::VectorXd x_check, Eigen::MatrixXd P_check, Eigen::VectorXd r_c_tc, Eigen::Quaterniond q_ct,
+                            Eigen::VectorXd &x_hat, Eigen::MatrixXd &P_hat);
 
 
 };

@@ -20,3 +20,9 @@ void quaternion_norm(Eigen::Quaterniond &unit_quat);
 
 // Return the 3x3 skew symmetric matrix of a vector
 Eigen::MatrixXd skew_symm(Eigen::VectorXd vector);
+
+// Return the 4x1 vector corresponding to a quaternion
+Eigen::VectorXd quat_to_vec(Eigen::Quaterniond quaternion);
+
+// Return the quaternion corresponding to a 4x1 vector
+Eigen::Quaterniond vec_to_quat(Eigen::VectorXd vec);
