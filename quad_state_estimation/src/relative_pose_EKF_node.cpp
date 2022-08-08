@@ -184,12 +184,12 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         // IMU Bias
         sensor_msgs::Imu IMU_bias_msg;
         IMU_bias_msg.header = new_header;
-        IMU_bias_msg.linear_acceleration.x = rel_pose_ekf.ab_nom(0);
-        IMU_bias_msg.linear_acceleration.y = rel_pose_ekf.ab_nom(1);
-        IMU_bias_msg.linear_acceleration.z = rel_pose_ekf.ab_nom(2);
-        IMU_bias_msg.angular_velocity.x = rel_pose_ekf.wb_nom(0);
-        IMU_bias_msg.angular_velocity.y = rel_pose_ekf.wb_nom(1);
-        IMU_bias_msg.angular_velocity.z = rel_pose_ekf.wb_nom(2);
+        IMU_bias_msg.linear_acceleration.x = rel_pose_ekf.ab_nom(0)+rel_pose_ekf.ab_static(0);
+        IMU_bias_msg.linear_acceleration.y = rel_pose_ekf.ab_nom(1)+rel_pose_ekf.ab_static(1);
+        IMU_bias_msg.linear_acceleration.z = rel_pose_ekf.ab_nom(2)+rel_pose_ekf.ab_static(2);
+        IMU_bias_msg.angular_velocity.x = rel_pose_ekf.wb_nom(0)+rel_pose_ekf.wb_static(0);
+        IMU_bias_msg.angular_velocity.y = rel_pose_ekf.wb_nom(1)+rel_pose_ekf.wb_static(1);
+        IMU_bias_msg.angular_velocity.z = rel_pose_ekf.wb_nom(2)+rel_pose_ekf.wb_static(2);
 
         // Relative velocity/acceleration
         geometry_msgs::Vector3Stamped rel_vel_msg;
