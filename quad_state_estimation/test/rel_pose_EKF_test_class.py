@@ -56,7 +56,7 @@ class RelativePoseEKF(object):
         self.dT = 1/update_freq
         self.measurement_freq = measurement_freq
         self.upd_per_meas = math.ceil(update_freq/measurement_freq)
-        self.measurement_delay = 0.030 # s
+        self.measurement_delay = 0.050 # s
         self.measurement_step_delay = max(int(round(self.measurement_delay/self.dT)),1)
         self.est_bias = True
         self.accel_orien_corr = False
@@ -160,6 +160,7 @@ class RelativePoseEKF(object):
         self.measurement_ready = False
         self.filter_run_once = False
         self.upds_since_correction = 0
+        self.pub_counter = 0
 
         # Tolerances and Constants
         self.small_ang_tol = 1E-10
@@ -227,14 +228,19 @@ class RelativePoseEKF(object):
         # With multi-rate EKF need to perform correction first since it changes state we propagate from on this timestep
         if self.multirate_EKF and perform_correction:
             # Extract state and covariance prediction at the time the measurement was recorded
-            ind_meas = max(len(self.x_hist)-(self.measurement_delay-1),0)
+            ind_meas = max(len(self.x_hist)-self.measurement_step_delay,0)
             x_check = self.x_hist[ind_meas]
             P_check = self.P_hist[ind_meas]
 
             # Execute correction step, store at time measurement was recorded
             x_hat, P_hat = self.correction_step(x_check,P_check,r_c_tc,q_ct)
+
+            if self.pub_counter >= 2514:
+                wait = 5
             self.x_hist[ind_meas] = x_hat
             self.P_hist[ind_meas] = P_hat
+
+            rospy.loginfo('Fused measurement. History length = {}, fuse index = {}, achieved delay of {}'.format(len(self.x_hist),ind_meas,len(self.x_hist)-ind_meas))
 
             # Remove history before measurement
             del self.x_hist[0:ind_meas]
@@ -250,7 +256,7 @@ class RelativePoseEKF(object):
             # Sync latest estimate to state history
             self.r_nom = x_check_i[0:3,0:1]
             self.v_nom = x_check_i[3:6,0:1]
-            self.q_nom = x_check_i[6:10,0:1]
+            self.q_nom = x_check_i[6:10,0:1].flatten()
             self.ab_nom = x_check_i[10:13,0:1]
             self.wb_nom = x_check_i[13:16,0:1]
             self.cov_pert = P_check_i
@@ -265,7 +271,7 @@ class RelativePoseEKF(object):
         imu_meas = np.vstack((a_meas,w_meas))
 
         # Execute prediction
-        x_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom,self.v_nom,self.q_nom,self.ab_nom,self.wb_nom))
+        x_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom))
                                                 ,imu_meas,self.cov_pert)
 
         if self.multirate_EKF:
@@ -276,7 +282,7 @@ class RelativePoseEKF(object):
 
             self.r_nom = x_check[0:3,0:1]
             self.v_nom = x_check[3:6,0:1]
-            self.q_nom = x_check[6:10,0:1]
+            self.q_nom = x_check[6:10,0:1].flatten()
             self.ab_nom = x_check[10:13,0:1]
             self.wb_nom = x_check[13:16,0:1]
             self.cov_pert = P_check
@@ -285,7 +291,7 @@ class RelativePoseEKF(object):
             x_hat,P_hat = self.correction_step(x_check,P_check,r_c_tc,q_ct)
             self.r_nom = x_hat[0:3,0:1]
             self.v_nom = x_hat[3:6,0:1]
-            self.q_nom = x_hat[6:10,0:1]
+            self.q_nom = x_hat[6:10,0:1].flatten()
             self.ab_nom = x_hat[10:13,0:1]
             self.wb_nom = x_hat[13:16,0:1]
             self.cov_pert = P_hat
@@ -294,7 +300,7 @@ class RelativePoseEKF(object):
             # Just store latest prediction
             self.r_nom = x_check[0:3,0:1]
             self.v_nom = x_check[3:6,0:1]
-            self.q_nom = x_check[6:10,0:1]
+            self.q_nom = x_check[6:10,0:1].flatten()
             self.ab_nom = x_check[10:13,0:1]
             self.wb_nom = x_check[13:16,0:1]
             self.cov_pert = P_check
@@ -330,6 +336,8 @@ class RelativePoseEKF(object):
         if not self.filter_run_once:
             self.filter_run_once = True
 
+        self.pub_counter += 1
+
     def initialize_state(self,reinit_bias):
         "Initialize state to last received AprilTag relative pose detection"
         self.state_lock.acquire()
@@ -354,7 +362,7 @@ class RelativePoseEKF(object):
         self.cov_pert = self.cov_init
 
         # Initialize state history with current state
-        self.x_hist = [np.vstack((self.r_nom,self.v_nom,self.q_nom,self.ab_nom,self.wb_nom))]
+        self.x_hist = [np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom))]
         self.u_hist = [np.zeros((6,1))]
         self.P_hist = [self.cov_pert]
 
@@ -369,7 +377,7 @@ class RelativePoseEKF(object):
 
         r_km1 = x_km1[0:3,0:1]
         v_km1 = x_km1[3:6,0:1]
-        q_km1 = x_km1[6:10,0:1]
+        q_km1 = x_km1[6:10,0:1].flatten()
         ab_km1 = x_km1[10:13,0:1]
         wb_km1 = x_km1[13:16,0:1]
 
@@ -386,7 +394,7 @@ class RelativePoseEKF(object):
         ab_check = ab_km1
         wb_check = wb_km1
 
-        x_check = np.vstack((r_check,v_check,q_check,ab_check,wb_check))
+        x_check = np.vstack((r_check,v_check,q_check.reshape((4,1)),ab_check,wb_check))
 
         # Calculate Jacobians
         F_km1 = np.eye(self.num_states)
@@ -430,7 +438,7 @@ class RelativePoseEKF(object):
         # Extract predicted state
         r_check = x_check[0:3,0:1]
         v_check = x_check[3:6,0:1]
-        q_check = x_check[6:10,0:1]
+        q_check = x_check[6:10,0:1].flatten()
         ab_check = x_check[10:13,0:1]
         wb_check = x_check[13:16,0:1]
 
@@ -473,7 +481,7 @@ class RelativePoseEKF(object):
             ab_hat = np.zeros((3,1))
             wb_hat = np.zeros((3,1))
 
-        x_hat = np.vstack((r_hat,v_hat,q_hat,ab_hat,wb_hat))
+        x_hat = np.vstack((r_hat,v_hat,q_hat.reshape((4,1)),ab_hat,wb_hat))
         
         # Return corrected state and covariance
         return x_hat, P_hat

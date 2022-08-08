@@ -9,6 +9,7 @@ from __future__ import division, print_function, absolute_import
 
 # Import libraries
 import rospy
+import threading, copy
 import numpy as np
 from tf.transformations import quaternion_from_euler, euler_from_quaternion, quaternion_about_axis, quaternion_multiply
 
@@ -16,7 +17,7 @@ from rel_pose_EKF_test_class import RelativePoseEKF
 
 # Import message types
 from geometry_msgs.msg import PointStamped, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped, Vector3Stamped
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, CameraInfo
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64
 
@@ -26,18 +27,23 @@ class RelativePoseEKFNode(object):
         
         # Rates:
         self.update_freq = 100 # Hz
-        self.measurement_freq = 2 # Hz
+        self.measurement_freq = 10 # Hz
 
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
+
+        self.camera_info_msg = CameraInfo()
+        self.camera_info_lock = threading.Lock()
 
         # Subscribers:
         self.IMU_topic = '/drone/imu'
         self.magnetometer_topic = 'drone/fake_magnetometer'
         self.apriltag_topic = '/tag_detections'
+        self.camera_info_topic = '/drone/camera_sensor/camera_na/camera_info'
 
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)
+        self.camera_info_sub = rospy.Subscriber(self.camera_info_topic,CameraInfo,callback=self.camera_info_sub_callback)
         self.magnetometer_sub = rospy.Subscriber(self.magnetometer_topic,Vector3Stamped,callback=self.magnetometer_sub_callback)
 
         # Publishers:
@@ -66,19 +72,29 @@ class RelativePoseEKFNode(object):
         self.rel_pose_ekf.magnetometer_lock.acquire()
         self.rel_pose_ekf.magnetometer_msg = msg
         self.rel_pose_ekf.magnetometer_lock.release()
+
+    def camera_info_sub_callback(self,msg):
+        self.camera_info_lock.acquire()
+        self.camera_info_msg = msg
+        self.camera_info_lock.release()
         
     def apriltag_sub_callback(self,msg):
         if len(msg.detections)>0:
             self.rel_pose_ekf.apriltag_lock.acquire()
+            # self.camera_info_lock.acquire()
             self.rel_pose_ekf.apriltag_msg = msg
+            # camera_info_header = copy.deepcopy(self.camera_info_msg.header)
             # curr_time = rospy.get_rostime()
             # rospy.loginfo('Received detection. Header time = {:.3f}, current time = {:.3f}'.format(msg.header.stamp.to_sec(),curr_time.to_sec()))
+            # rospy.loginfo('Camera info delay: {:.1f} ms to AprilTag, {:.1f} ms to now'.format(1000*(msg.header.stamp.to_sec()-camera_info_header.stamp.to_sec()),
+            #                                                                                 1000*(curr_time.to_sec()-camera_info_header.stamp.to_sec())))
             self.rel_pose_ekf.measurement_ready = True
         
             if not self.rel_pose_ekf.state_initialized:
                 self.rel_pose_ekf.initialize_state(False)
             
             self.rel_pose_ekf.apriltag_lock.release()
+            # self.camera_info_lock.release()
 
     def filter_update_callback(self,event):
         # Execute filter update
