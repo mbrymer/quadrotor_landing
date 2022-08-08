@@ -21,10 +21,12 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<std::string>("pose_report_frame_name",pose_report_frame_name,"drone/rel_pose_report");
 
     double measurement_freq;
+    double measurement_delay;
     bool limit_measurement_freq;
 
     node.param<double>("update_freq",update_freq,100.0);
     node.param<double>("measurement_freq",measurement_freq,10.0);
+    node.param<double>("measurement_delay",measurement_delay,0.010);
     node.param<bool>("limit_measurement_freq",limit_measurement_freq,false);
 
     // Set publishers, subscribers and timers
@@ -43,11 +45,13 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     // Initialize EKF
     rel_pose_ekf.update_freq = update_freq;
     rel_pose_ekf.measurement_freq = measurement_freq;
+    rel_pose_ekf.measurement_delay = measurement_delay;
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
     node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
     node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
+    node.param<bool>("multirate_ekf",rel_pose_ekf.multirate_ekf,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;
@@ -77,6 +81,14 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<double>("ang_cov_init",rel_pose_ekf.ang_cov_init,0.15);
     node.param<double>("ab_cov_init",rel_pose_ekf.ab_cov_init,0.5);
     node.param<double>("wb_cov_init",rel_pose_ekf.wb_cov_init,0.1);
+
+    std::vector<double> ab_static;
+    std::vector<double> wb_static;
+
+    node.getParam("accel_bias_static",ab_static);
+    node.getParam("gyro_bias_static",wb_static);
+    rel_pose_ekf.ab_static = Eigen::Vector3d(ab_static.data());
+    rel_pose_ekf.wb_static = Eigen::Vector3d(wb_static.data());
 
     std::vector<double> r_v_cv;
     std::vector<double> q_vc;
@@ -159,7 +171,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         rel_pose_msg.pose.pose.orientation.x = rel_pose_ekf.q_nom.x();
         rel_pose_msg.pose.pose.orientation.y = rel_pose_ekf.q_nom.y();
         rel_pose_msg.pose.pose.orientation.z = rel_pose_ekf.q_nom.z();
-        
+
         Eigen::MatrixXd pose_cov(6,6);
         pose_cov << rel_pose_ekf.cov_pert(seq(0,2),seq(0,2)),rel_pose_ekf.cov_pert(seq(0,2),seq(6,8)),
         rel_pose_ekf.cov_pert(seq(6,8),seq(0,2)),rel_pose_ekf.cov_pert(seq(6,8),seq(6,8));
@@ -172,12 +184,12 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         // IMU Bias
         sensor_msgs::Imu IMU_bias_msg;
         IMU_bias_msg.header = new_header;
-        IMU_bias_msg.linear_acceleration.x = rel_pose_ekf.ab_nom(0);
-        IMU_bias_msg.linear_acceleration.y = rel_pose_ekf.ab_nom(1);
-        IMU_bias_msg.linear_acceleration.z = rel_pose_ekf.ab_nom(2);
-        IMU_bias_msg.angular_velocity.x = rel_pose_ekf.wb_nom(0);
-        IMU_bias_msg.angular_velocity.y = rel_pose_ekf.wb_nom(1);
-        IMU_bias_msg.angular_velocity.z = rel_pose_ekf.wb_nom(2);
+        IMU_bias_msg.linear_acceleration.x = rel_pose_ekf.ab_nom(0)+rel_pose_ekf.ab_static(0);
+        IMU_bias_msg.linear_acceleration.y = rel_pose_ekf.ab_nom(1)+rel_pose_ekf.ab_static(1);
+        IMU_bias_msg.linear_acceleration.z = rel_pose_ekf.ab_nom(2)+rel_pose_ekf.ab_static(2);
+        IMU_bias_msg.angular_velocity.x = rel_pose_ekf.wb_nom(0)+rel_pose_ekf.wb_static(0);
+        IMU_bias_msg.angular_velocity.y = rel_pose_ekf.wb_nom(1)+rel_pose_ekf.wb_static(1);
+        IMU_bias_msg.angular_velocity.z = rel_pose_ekf.wb_nom(2)+rel_pose_ekf.wb_static(2);
 
         // Relative velocity/acceleration
         geometry_msgs::Vector3Stamped rel_vel_msg;
@@ -196,7 +208,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
         geometry_msgs::PointStamped pred_length_msg;
         pred_length_msg.header = new_header;
         pred_length_msg.point.x = rel_pose_ekf.upds_since_correction;
-        
+
         // Publish messages
         rel_pose_pub.publish(rel_pose_msg);
         IMU_bias_pub.publish(IMU_bias_msg);
@@ -234,5 +246,5 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
 
         }
     }
-    
+
 }
