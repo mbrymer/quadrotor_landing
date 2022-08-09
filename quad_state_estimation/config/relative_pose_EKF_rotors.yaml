@@ -28,8 +28,13 @@ q_vc: [0.70711,-0.70711,0,0]
 camera_K: [241.4268,0,376.5,0,241.4268,240.5,0,0,1]
 camera_width: 752
 camera_height: 480
-tag_width: 0.8
+
+# Target Configuration
+n_tags: 1
 tag_in_view_margin: 0.02
+
+tag_widths: [0.8] # m
+tag_positions: [0,0,0]
 
 # Flags/Options
 limit_measurement_freq: True

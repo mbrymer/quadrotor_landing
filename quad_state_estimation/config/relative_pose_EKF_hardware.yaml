@@ -26,16 +26,29 @@ gyro_bias_static: [-0.04,-0.02,0.0]
 camera_K: [437.3412312213781,0,328.5442810236917,0,438.0867474272743,239.2536470406629,0,0,1]
 camera_width: 640.0
 camera_height: 480.0
-tag_width: 0 # 0.199375
-tag_in_view_margin: 0.02
 
 # Extrinsics ref:IMU_camera_cal_2022-07-16-22-48-49_640x480_clip-camchain-imucam.yaml
 r_v_cv: [0.06036412,-0.00145196,-0.04439579]
 q_vc: [-0.7035177, 0.7106742, 0.0014521, -0.0017207]
 
+# Target Configuration
+n_tags: 9
+tag_in_view_margin: 0.00
+
+tag_widths: [0.08382,0.16764,0.16764,0.16764,0.16764,0.33528,0.33528,0.33528,0.33528] # 20% margin on tag dimension to leave white border
+tag_positions: [0,0,0,
+                0,0.1571625,0,
+                0.1571625,0,0,
+                0,-0.1571625,0,
+                -0.1571625,0,0
+                -0.244475, 0.244475,0
+                0.244475, 0.244475,0
+                0.244475, -0.244475,0
+                -0.244475, -0.244475,0]
+
 # Flags/Options
 limit_measurement_freq: False
-corner_margin_enbl: False
+corner_margin_enbl: True
 est_bias: True
 direct_orien_method: True
 multirate_ekf: True

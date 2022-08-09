@@ -60,8 +60,13 @@ RelativePoseEKF::RelativePoseEKF()
                 0,0,1 ;
     camera_width = 752;
     camera_height = 480;
-    tag_width = 0.8;
+
+    // Target Configuration
+    n_tags = 1;
     tag_in_view_margin = 0.02;
+
+    tag_widths = 0.8*Eigen::VectorXd::Ones(1);
+    tag_positions = Eigen::MatrixXd::Zero(3,1);
 
     // Counters/flags
     state_initialized = false;
@@ -116,10 +121,6 @@ void RelativePoseEKF::initialize_params()
     C_vc = q_vc.toRotationMatrix();
     T_vc = Eigen::Translation3d(r_v_cv)*q_vc;
 
-    tag_corners << tag_width/2, -tag_width/2, -tag_width/2, tag_width/2,
-                tag_width/2, tag_width/2, -tag_width/2, -tag_width/2,
-                0,0,0,0,
-                1,1,1,1;
 }
 
 void RelativePoseEKF::filter_update(double t_curr)
@@ -154,19 +155,29 @@ void RelativePoseEKF::filter_update(double t_curr)
         if (corner_margin_enbl)
         {
             // Check criteria for a "good" detection
-            // Project tag corners to pixel coordinates, verify they have some margin to the edge of the image
-            Eigen::MatrixXd tag_corners_c = T_ct*tag_corners;
-            Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
-            Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
-            Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
+            // Project tag corners to pixel coordinates, verify that at least one in the bundle has some margin to the edge of the image
+            for (int i=0;i<n_tags; ++i)
+            {
+                Eigen::Matrix4d tag_corners_curr;
+                tag_corners_curr << tag_widths(i)/2+tag_positions(0,i), -tag_widths(i)/2+tag_positions(0,i), -tag_widths(i)/2+tag_positions(0,i), tag_widths(i)/2+tag_positions(0,i),
+                    tag_widths(i)/2+tag_positions(1,i), tag_widths(i)/2+tag_positions(1,i), -tag_widths(i)/2+tag_positions(1,i), -tag_widths(i)/2+tag_positions(1,i),
+                    0,0,0,0,
+                    1,1,1,1;
+                Eigen::MatrixXd tag_corners_c = T_ct*tag_corners_curr;
+                Eigen::MatrixXd tag_corners_inv_z = tag_corners_c(seq(2,2),Eigen::all).cwiseInverse();
+                Eigen::MatrixXd tag_corners_c_n = tag_corners_c * tag_corners_inv_z.asDiagonal();
+                Eigen::MatrixXd tag_corners_px = camera_K*tag_corners_c_n(seq(0,2),Eigen::all);
 
-            Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
-            Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
+                Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
+                Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
 
-            perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
-                                min_px(1)>camera_height*tag_in_view_margin &&
-                                max_px(0)<camera_width*(1-tag_in_view_margin) &&
-                                max_px(1)<camera_height*(1-tag_in_view_margin));
+                perform_correction = (min_px(0)>camera_width*tag_in_view_margin &&
+                                    min_px(1)>camera_height*tag_in_view_margin &&
+                                    max_px(0)<camera_width*(1-tag_in_view_margin) &&
+                                    max_px(1)<camera_height*(1-tag_in_view_margin));
+                if (perform_correction)
+                    break;
+            }
         }
         else
         {
