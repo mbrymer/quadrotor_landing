@@ -123,12 +123,12 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.getParam("tag_positions",tag_positions);
 
     rel_pose_ekf.tag_widths = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(tag_widths.data(),tag_widths.size());
-    rel_pose_ekf.tag_positions.resize(3,rel_pose_ekf.n_tags); // Brute force copy
-    for (int i = 0; i<3; ++i)
+    rel_pose_ekf.tag_positions.resize(3,rel_pose_ekf.n_tags); // Brute force copy. TODO: Figure out the proper Eigen one liner for this
+    for (int i = 0; i<rel_pose_ekf.n_tags; ++i)
     {
-        for (int j = 0; j<rel_pose_ekf.n_tags; ++j)
+        for (int j = 0; j<3; ++j)
         {
-            rel_pose_ekf.tag_positions(i,j) = tag_positions[3*i+j];
+            rel_pose_ekf.tag_positions(j,i) = tag_positions[3*i+j];
         }
     }
 
