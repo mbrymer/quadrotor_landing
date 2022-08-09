@@ -23,7 +23,7 @@ class RelativePoseEKF
         RelativePoseEKF();
 
         // Perform periodic EKF filter update
-        void filter_update();
+        void filter_update(double t_curr);
         // Initialize state to last received AprilTag relative pose
         void initialize_state(bool reinit_bias);
         // Compute convenience values derived from parameters
@@ -40,6 +40,7 @@ class RelativePoseEKF
         Eigen::VectorXd IMU_ang_vel;
         Eigen::VectorXd apriltag_pos;
         Eigen::Quaterniond apriltag_orien;
+        double apriltag_time;
 
         // State
         // x = [r_x/y/z, v_x/y/z, theta_x/y/z, a_bias_x/y/z, w_bias_x/y/z ]
@@ -67,6 +68,8 @@ class RelativePoseEKF
         double dT_nom;
         double measurement_freq;
         double measurement_delay;
+        double measurement_delay_max;
+        double dyn_measurement_delay_offset;
         double t_last_update;
 
         bool est_bias;
@@ -74,6 +77,7 @@ class RelativePoseEKF
         bool corner_margin_enbl;
         bool direct_orien_method;
         bool multirate_ekf;
+        bool dynamic_meas_delay;
 
         int upd_per_meas;
         int num_states;

@@ -22,11 +22,15 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
 
     double measurement_freq;
     double measurement_delay;
+    double measurement_delay_max;
+    double dyn_measurement_delay_offset;
     bool limit_measurement_freq;
 
     node.param<double>("update_freq",update_freq,100.0);
     node.param<double>("measurement_freq",measurement_freq,10.0);
     node.param<double>("measurement_delay",measurement_delay,0.010);
+    node.param<double>("measurement_delay_max",measurement_delay_max,0.200);
+    node.param<double>("dyn_measurement_delay_offset",dyn_measurement_delay_offset,0.0);
     node.param<bool>("limit_measurement_freq",limit_measurement_freq,false);
 
     // Set publishers, subscribers and timers
@@ -46,12 +50,15 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_pose_ekf.update_freq = update_freq;
     rel_pose_ekf.measurement_freq = measurement_freq;
     rel_pose_ekf.measurement_delay = measurement_delay;
+    rel_pose_ekf.measurement_delay_max = measurement_delay_max;
+    rel_pose_ekf.dyn_measurement_delay_offset = dyn_measurement_delay_offset;
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
     node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
     node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
     node.param<bool>("multirate_ekf",rel_pose_ekf.multirate_ekf,false);
+    node.param<bool>("dynamic_meas_delay",rel_pose_ekf.dynamic_meas_delay,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;
@@ -136,6 +143,7 @@ void RelativePoseEKFNode::AprilTagSubCallback(const apriltag_ros::AprilTagDetect
         rel_pose_ekf.apriltag_orien.x() = apriltag_msg.detections[0].pose.pose.pose.orientation.x;
         rel_pose_ekf.apriltag_orien.y() = apriltag_msg.detections[0].pose.pose.pose.orientation.y;
         rel_pose_ekf.apriltag_orien.z() = apriltag_msg.detections[0].pose.pose.pose.orientation.z;
+        rel_pose_ekf.apriltag_time = apriltag_msg.header.stamp.toSec();
         rel_pose_ekf.measurement_ready = true;
 
         if(!rel_pose_ekf.state_initialized)
@@ -151,7 +159,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
 {
     // Update filter
     // std::cout << "In the filter update callback" << std::endl;
-    rel_pose_ekf.filter_update();
+    rel_pose_ekf.filter_update(ros::Time::now().toSec());
 
     if (rel_pose_ekf.filter_active)
     {
