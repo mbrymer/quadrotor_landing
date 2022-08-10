@@ -2,9 +2,9 @@
 # Rates
 update_freq: 100.0 # Hz
 measurement_freq: 100.0 # Hz
-measurement_delay: 0.100 # s
-measurement_delay_max: 0.200 # s
-dyn_measurement_delay_offset: 0.005 # s
+measurement_delay: 0.150 # s
+measurement_delay_max: 0.350 # s
+dyn_measurement_delay_offset: 0.075 # s
 
 # Topics
 IMU_topic: "/mavros/imu/data_raw"

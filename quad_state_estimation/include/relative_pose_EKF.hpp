@@ -83,6 +83,8 @@ class RelativePoseEKF
         int num_states;
         int measurement_step_delay;
 
+        double measurement_delay_curr;
+
         // Process and Measurement Noises
         double r_cov_init;
         double v_cov_init;

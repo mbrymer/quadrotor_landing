@@ -37,6 +37,7 @@ RelativePoseEKF::RelativePoseEKF()
     direct_orien_method = false;
     multirate_ekf = false;
     num_states = 15;
+    measurement_delay_curr = 0.0;
 
     // Process and Measurement Noises
     Q_a = 0.005*Eigen::VectorXd::Ones(3);
@@ -195,7 +196,7 @@ void RelativePoseEKF::filter_update(double t_curr)
     if (multirate_ekf && perform_correction)
     {
         // Extract state and covariance prediction at the time the measurement was taken
-        double measurement_delay_curr = dynamic_meas_delay ? std::min(t_curr-apriltag_time+dyn_measurement_delay_offset,measurement_delay_max): measurement_delay;
+        measurement_delay_curr = dynamic_meas_delay ? std::min(t_curr-apriltag_time+dyn_measurement_delay_offset,measurement_delay_max): measurement_delay;
         int step_delay_curr = std::max(int(measurement_delay_curr/dT_nom+0.5),1);
         int ind_meas = std::max(int(x_hist.size())-step_delay_curr,0);
         Eigen::VectorXd x_check = x_hist[ind_meas];

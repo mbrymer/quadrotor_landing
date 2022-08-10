@@ -16,6 +16,8 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<std::string>("rel_accel_topic",rel_accel_topic,"/state_estimation/rel_pose_acceleration");
     node.param<std::string>("IMU_bias_topic",IMU_bias_topic,"/state_estimation/IMU_bias");
     node.param<std::string>("upds_since_correction_topic",pred_length_topic,"/state_estimation/upds_since_correction");
+    node.param<std::string>("meas_delay_topic",meas_delay_topic,"/state_estimation/measurement_delay");
+
     node.param<std::string>("pose_frame_name",pose_frame_name,"drone/rel_pose_est");
     node.param<std::string>("pose_parent_frame_name",pose_parent_frame_name,"target/tag_link");
     node.param<std::string>("pose_report_frame_name",pose_report_frame_name,"drone/rel_pose_report");
@@ -43,6 +45,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_accel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_accel_topic,1);
     IMU_bias_pub = node.advertise<sensor_msgs::Imu>(IMU_bias_topic,1);
     pred_length_pub = node.advertise<geometry_msgs::PointStamped>(pred_length_topic,1);
+    meas_delay_pub = node.advertise<geometry_msgs::PointStamped>(meas_delay_topic,1);
 
     filter_update_timer = node.createTimer(ros::Duration(1.0/update_freq),&RelativePoseEKFNode::FilterUpdateCallback,this);
 
@@ -261,7 +264,12 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
             rel_pose_report_msg.pose.orientation.z = rel_pose_ekf.q_tv_obs.z();
             rel_pose_report_msg.pose.orientation.w = rel_pose_ekf.q_tv_obs.w();
 
+            geometry_msgs::PointStamped meas_delay_msg;
+            meas_delay_msg.header = new_header;
+            meas_delay_msg.point.x = rel_pose_ekf.measurement_delay_curr;
+
             rel_pose_report_pub.publish(rel_pose_report_msg);
+            meas_delay_pub.publish(meas_delay_msg);
 
             tf::Transform rel_pose_report_tf;
             rel_pose_report_tf.setOrigin(tf::Vector3(rel_pose_ekf.r_t_vt_obs(0),rel_pose_ekf.r_t_vt_obs(1),rel_pose_ekf.r_t_vt_obs(2)));
