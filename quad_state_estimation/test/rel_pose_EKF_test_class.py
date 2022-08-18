@@ -21,6 +21,7 @@ from tf.transformations import quaternion_matrix, quaternion_multiply, quaternio
 # Import message types
 from geometry_msgs.msg import Point, PointStamped, Vector3, Vector3Stamped, Quaternion, PoseWithCovariance, PoseWithCovarianceStamped, Pose, PoseStamped
 from sensor_msgs.msg import Imu
+from mav_msgs.msg import Actuators
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64, Header
 
@@ -33,6 +34,7 @@ class RelativePoseEKF(object):
         self.IMU_msg = Imu()
         self.apriltag_msg = AprilTagDetectionArray()
         self.magnetometer_msg = Vector3Stamped()
+        self.motor_msg = Actuators()
 
         # Outputs
         self.rel_pose_msg = PoseWithCovarianceStamped()
@@ -50,6 +52,7 @@ class RelativePoseEKF(object):
         self.imu_lock = threading.Lock()
         self.apriltag_lock = threading.Lock()
         self.magnetometer_lock = threading.Lock()
+        self.motor_speed_lock = threading.Lock()
 
         # Filter Parameters
         self.update_freq = update_freq
@@ -65,18 +68,21 @@ class RelativePoseEKF(object):
 
         # State Storage
         if self.est_bias:
-            self.num_states = 15
+            self.num_states = 18
         else:
-            self.num_states = 9
+            self.num_states = 12
         self.r_nom = np.zeros((3,1))
         self.v_nom = np.zeros((3,1))
         self.q_nom = np.zeros(4)
         self.ab_nom = np.zeros((3,1))
         self.wb_nom = np.zeros((3,1))
+        self.k_nom = np.array([1,0,0]).reshape((3,1))
         self.cov_pert = np.zeros((self.num_states,self.num_states))
 
-        self.ab_const = np.array([0.324,0.078,-0.1])
-        self.wb_const = np.array([-0.019,-0.013,0])
+        # self.ab_const = np.array([0.324,0.078,-0.1])
+        # self.wb_const = np.array([-0.019,-0.013,0]) # Sim values
+        self.ab_const = np.array([0.20,-0.09,-0.03])
+        self.wb_const = np.array([-0.02,-0.01,0.0]) # Hardware values
 
         # Process and Measurement Noises
         self.r_cov_init = 0.1
@@ -84,6 +90,7 @@ class RelativePoseEKF(object):
         self.ang_cov_init = 0.15
         self.ab_cov_init = 0.5
         self.wb_cov_init = 0.1
+        self.k_cov_init = 0.1
 
         # self.Q_a = 0.01*np.eye(3)
         # self.Q_w = 0.01*np.eye(3)
@@ -92,28 +99,30 @@ class RelativePoseEKF(object):
         # self.Q_w = 0.00045*np.eye(3) # 0.0005
         # self.Q_ab = 7.0E-6*np.eye(3) # 5E-5
         # self.Q_wb = 5.0E-6*np.eye(3) # 5E-6
-        self.Q_a = 0.005*np.eye(3) # Sim values
+        
         self.Q_w = 0.0005*np.eye(3)
+        self.Q_v = 1E-3*np.eye(3)
         self.Q_ab = 5E-5*np.eye(3)
         self.Q_wb = 5E-6*np.eye(3)
 
         if self.est_bias:
             self.cov_init = np.diag(np.hstack((self.r_cov_init*np.ones(3),self.v_cov_init*np.ones(3),
-                        self.ang_cov_init*np.ones(3),self.ab_cov_init*np.ones(3),self.wb_cov_init*np.ones(3))))
-            self.Q = block_diag(self.Q_a,self.Q_w,self.Q_ab,self.Q_wb)
+                        self.ang_cov_init*np.ones(3),self.ab_cov_init*np.ones(3),self.wb_cov_init*np.ones(3),self.k_cov_init*np.ones(3))))
+            self.Q = block_diag(self.Q_w,self.Q_v,self.Q_ab,self.Q_wb)
         else:
             self.cov_init = np.diag(np.hstack((self.r_cov_init*np.ones(3),self.v_cov_init*np.ones(3),
-                        self.ang_cov_init*np.ones(3))))
-            self.Q = block_diag(self.Q_a,self.Q_w)
-
-        # self.R_r = 0.015*np.eye(3)
-        # self.R_ang = 0.05*np.eye(3)
+                        self.ang_cov_init*np.ones(3),self.k_cov_init*np.ones(3))))
+            self.Q = block_diag(self.Q_w,self.Q_v)
+        
+        self.R_r = 0.015*np.eye(3)
+        self.R_ang = 0.05*np.eye(3)
         # self.R_r =  np.diag(np.array([0.0015,0.0015,0.006])) # Hardware values
         # self.R_ang = np.diag(np.array([0.0015,0.0015,0.04])) # 
-        self.R_r = np.diag(np.array([0.005,0.005,0.015])) # Sim Values
+        self.R_a = 0.005*np.eye(3) # Sim values
+        self.R_r = np.diag(np.array([0.005,0.005,0.015]))
         self.R_ang = np.diag(np.array([0.0025,0.0025,0.025]))
-        self.R_acc = 0.05*np.eye(3)
-        self.R_mag = 0.005*np.eye(3)
+        # self.R_acc = 0.05*np.eye(3)
+        # self.R_mag = 0.005*np.eye(3)
 
         self.b_0 = np.array([[1],[0],[0]]) # Reference magnetic field direction
 
@@ -122,15 +131,15 @@ class RelativePoseEKF(object):
         elif self.use_magnetometer:
             self.R = block_diag(self.R_r,self.R_ang,self.R_mag)
         else:
-            self.R = block_diag(self.R_r,self.R_ang)
+            self.R = block_diag(self.R_a,self.R_r,self.R_ang)
 
         # State, input and covariance histories for multi-rate EKF
-        self.x_hist = [np.zeros((self.num_states,1))]
-        self.u_hist = [np.zeros((6,1))]
+        self.x_hist = [np.zeros((self.num_states+1,1))]
+        self.u_hist = [np.zeros((10,1))]
         self.P_hist = [np.zeros((self.num_states,self.num_states))]
 
         # Camera to Vehicle Transform
-        # self.r_v_cv = np.array([[0.06036412],[-0.00145196],[-0.04439579]]) # Harware values
+        # self.r_v_cv = np.array([[0.06036412],[-0.00145196],[-0.04439579]]) # Hardware values
         self.r_v_cv = np.array([[0],[0],[-0.073]]) # Sim Values
         # self.q_vc = quaternion_norm(np.array([-0.7035177, 0.7106742, 0.0014521, -0.0017207])) # Hardware values
         self.q_vc = quaternion_norm(np.array([0.70711,-0.70711,0,0])) # Sim values
@@ -148,7 +157,8 @@ class RelativePoseEKF(object):
         self.camera_height = 480
         # self.tag_width = 0.199375 # Hardware # m
         self.tag_width = 0.8 # Sim
-        self.tag_in_view_margin = 0.02 # %
+        self.tag_in_view_margin = 0.02 # % Sim
+        # self.tag_in_view_margin = -50000 # % Hardware disable
 
         self.tag_corners = np.array([[self.tag_width/2,-self.tag_width/2,-self.tag_width/2,self.tag_width/2],
                                     [self.tag_width/2,self.tag_width/2,-self.tag_width/2,-self.tag_width/2],
@@ -164,6 +174,7 @@ class RelativePoseEKF(object):
 
         # Tolerances and Constants
         self.small_ang_tol = 1E-10
+        self.m = 1 # kg
         self.g = np.array([[0],[0],[-9.8]])
         self.pose_frame_name = "drone/rel_pose_est"
         self.pose_report_frame_name = "drone/rel_pose_report"
@@ -178,9 +189,12 @@ class RelativePoseEKF(object):
         self.imu_lock.acquire()
         self.magnetometer_lock.acquire()
         self.apriltag_lock.acquire()
+        self.motor_speed_lock.acquire()
 
-        imu_curr = self.IMU_msg
-        mag_curr = self.magnetometer_msg
+        imu_curr = copy.deepcopy(self.IMU_msg)
+        mag_curr = copy.deepcopy(self.magnetometer_msg)
+        motor_curr = copy.deepcopy(self.motor_msg)
+
         if self.measurement_ready and (self.upds_since_correction+1)>=self.upd_per_meas and self.filter_run_once:
             # Extract AprilTag reading, build tag pose matrix
             meas_curr = self.apriltag_msg
@@ -205,19 +219,20 @@ class RelativePoseEKF(object):
             min_px = np.min(tag_corners_px[0:2,:],axis=1)
             max_px = np.max(tag_corners_px[0:2,:],axis=1)
 
-            perform_correction = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+            perform_tag_correction = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
                                 min_px[1]>self.camera_height*self.tag_in_view_margin and
                                 max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
                                 max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
 
         else:
-            perform_correction = False
+            perform_tag_correction = False
 
         self.imu_lock.release()
         self.magnetometer_lock.release()
         self.apriltag_lock.release()
+        self.motor_speed_lock.release()
 
-        if perform_correction:
+        if perform_tag_correction:
             # Fuse motion model prediction with AprilTag readings
             # Convert AprilTag readings to vehicle state coordinates
             q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
@@ -226,17 +241,17 @@ class RelativePoseEKF(object):
             r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
 
         # With multi-rate EKF need to perform correction first since it changes state we propagate from on this timestep
-        if self.multirate_EKF and perform_correction:
+        if self.multirate_EKF and perform_tag_correction:
             # Extract state and covariance prediction at the time the measurement was recorded
-            ind_meas = max(len(self.x_hist)-self.measurement_step_delay,0)
-            x_check = self.x_hist[ind_meas]
-            P_check = self.P_hist[ind_meas]
+            ind_meas = max(len(self.x_hist)-self.measurement_step_delay,1)
+            x_km1 = self.x_hist[ind_meas-1]
+            P_km1 = self.P_hist[ind_meas-1]
+            u_k = self.u_hist[ind_meas]
 
-            # Execute correction step, store at time measurement was recorded
-            x_hat, P_hat = self.correction_step(x_check,P_check,r_c_tc,q_ct)
+            # Execute prediction and then correction step at time AprilTag measurement was recorded
+            x_check, P_check = self.prediction_step(x_km1,u_k,P_km1)[0:2]
+            x_hat, P_hat = self.correction_step(x_check,P_check,u_k,r_c_tc,q_ct)
 
-            if self.pub_counter >= 2514:
-                wait = 5
             self.x_hist[ind_meas] = x_hat
             self.P_hist[ind_meas] = P_hat
 
@@ -247,19 +262,20 @@ class RelativePoseEKF(object):
             del self.u_hist[0:ind_meas]
             del self.P_hist[0:ind_meas]
 
-            # Update state history by propagating forwards based on past IMU measurements
+            # Update state history by reexecuting prediction/correction steps from IMU measurements
             for i in range(1,len(self.x_hist)):
                 x_check_i,P_check_i = self.prediction_step(self.x_hist[i-1],self.u_hist[i],self.P_hist[i-1])[0:2]
-                self.x_hist[i] = x_check_i
-                self.P_hist[i] = P_check_i
+                x_hat_i,P_hat_i = self.correction_step(x_check_i,P_check_i,self.u_hist[i],None,None)
+                self.x_hist[i] = x_hat_i
+                self.P_hist[i] = P_hat_i
             
             # Sync latest estimate to state history
-            self.r_nom = x_check_i[0:3,0:1]
-            self.v_nom = x_check_i[3:6,0:1]
-            self.q_nom = x_check_i[6:10,0:1].flatten()
-            self.ab_nom = x_check_i[10:13,0:1]
-            self.wb_nom = x_check_i[13:16,0:1]
-            self.cov_pert = P_check_i
+            self.r_nom = x_hat_i[0:3,0:1]
+            self.v_nom = x_hat_i[3:6,0:1]
+            self.q_nom = x_hat_i[6:10,0:1].flatten()
+            self.ab_nom = x_hat_i[10:13,0:1]
+            self.wb_nom = x_hat_i[13:16,0:1]
+            self.cov_pert = P_hat_i
 
         # Current timestep    
         # Prediction step
@@ -268,47 +284,44 @@ class RelativePoseEKF(object):
                             imu_curr.linear_acceleration.z]).reshape((3,1))
         w_meas = np.array([imu_curr.angular_velocity.x,imu_curr.angular_velocity.y,
                             imu_curr.angular_velocity.z]).reshape((3,1))
-        imu_meas = np.vstack((a_meas,w_meas))
+        mot_meas = np.array([motor_curr.angular_velocities[0],motor_curr.angular_velocities[1],
+                            motor_curr.angular_velocities[2],motor_curr.angular_velocities[3]]).reshape((4,1))
+        u_meas = np.vstack((a_meas,w_meas,mot_meas))
 
         # Execute prediction
         x_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom))
-                                                ,imu_meas,self.cov_pert)
-
+                                                ,u_meas,self.cov_pert)
+ 
         if self.multirate_EKF:
-            # Append prediction to state history, store in latest state
-            self.x_hist.append(x_check)
-            self.u_hist.append(imu_meas)
-            self.P_hist.append(P_check)
+            # Perform correction based on IMU only
+            # Append to state history and store in latest state
+            x_hat, P_hat = self.correction_step(x_check,P_check,u_meas,None,None)
 
-            self.r_nom = x_check[0:3,0:1]
-            self.v_nom = x_check[3:6,0:1]
-            self.q_nom = x_check[6:10,0:1].flatten()
-            self.ab_nom = x_check[10:13,0:1]
-            self.wb_nom = x_check[13:16,0:1]
-            self.cov_pert = P_check
-        elif perform_correction:
-            # Single state EKF, perform correction step and store corrected estimate
-            x_hat,P_hat = self.correction_step(x_check,P_check,r_c_tc,q_ct)
-            self.r_nom = x_hat[0:3,0:1]
-            self.v_nom = x_hat[3:6,0:1]
-            self.q_nom = x_hat[6:10,0:1].flatten()
-            self.ab_nom = x_hat[10:13,0:1]
-            self.wb_nom = x_hat[13:16,0:1]
-            self.cov_pert = P_hat
+            self.x_hist.append(x_hat)
+            self.u_hist.append(u_meas)
+            self.P_hist.append(P_hat)
+        elif perform_tag_correction:
+            # Single state EKF, perform correction based on tag + IMU and store corrected estimate
+            x_hat,P_hat = self.correction_step(x_check,P_check,u_meas,r_c_tc,q_ct)
         else:
-            # Single state EKF, prediction only
-            # Just store latest prediction
-            self.r_nom = x_check[0:3,0:1]
-            self.v_nom = x_check[3:6,0:1]
-            self.q_nom = x_check[6:10,0:1].flatten()
-            self.ab_nom = x_check[10:13,0:1]
-            self.wb_nom = x_check[13:16,0:1]
-            self.cov_pert = P_check
+            # Single state EKF, correction based on IMU only
+            x_hat,P_hat = self.correction_step(x_check,P_check,u_meas,None,None)
 
-        if perform_correction:
+        self.r_nom = x_hat[0:3,0:1]
+        self.v_nom = x_hat[3:6,0:1]
+        self.q_nom = x_hat[6:10,0:1].flatten()
+        self.ab_nom = x_hat[10:13,0:1]
+        self.wb_nom = x_hat[13:16,0:1]
+        self.cov_pert = P_hat
+
+        if perform_tag_correction:
             self.upds_since_correction = 0
         else:
             self.upds_since_correction += 1
+
+        # Convert relative velocity into tag frame for reporting
+        C_hat = quaternion_matrix(self.q_nom)[0:3,0:3]
+        v_nom_tag = np.dot(C_hat,self.v_nom)
 
         # Pack estimate up into messages and publish transform
         curr_time = rospy.get_rostime()
@@ -322,12 +335,12 @@ class RelativePoseEKF(object):
         self.IMU_bias_msg = Imu(header=curr_header,
                                 linear_acceleration = Vector3(x=self.ab_nom[0],y=self.ab_nom[1],z=self.ab_nom[2]),
                                 angular_velocity = Vector3(x=self.wb_nom[0],y=self.wb_nom[1],z=self.wb_nom[2]))
-        self.rel_vel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=self.v_nom[0], y=self.v_nom[1], z = self.v_nom[2]))
+        self.rel_vel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=v_nom_tag[0], y=v_nom_tag[1], z = v_nom_tag[2]))
         self.rel_accel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=accel_rel[0], y=accel_rel[1], z = accel_rel[2]))
         self.pred_length_msg = PointStamped(header=curr_header,point = Point(x=self.upds_since_correction))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time,self.pose_frame_name,self.pose_rel_frame_name)
 
-        if perform_correction:
+        if perform_tag_correction:
             self.rel_pose_report_msg = PoseStamped(header=curr_header,
             pose = Pose(position = Point(x=r_t_vt_obs[0],y=r_t_vt_obs[1],z=r_t_vt_obs[2]),
                             orientation = Quaternion(x=q_tv_obs[0],y=q_tv_obs[1],z=q_tv_obs[2],w=q_tv_obs[3])))
@@ -371,36 +384,52 @@ class RelativePoseEKF(object):
         self.state_lock.release()
 
     def prediction_step(self,x_km1,u,P_km1):
-        "Execute prediction step of EKF. Propagate state forward based on IMU measurements"
-        a_meas = u[0:3,0:1]
+        "Execute prediction step of EKF. Propagate state forward based on IMU and motor speed measurements"
         w_meas = u[3:6,0:1]
+        mot_meas = u[6:10,0:1]
 
         r_km1 = x_km1[0:3,0:1]
         v_km1 = x_km1[3:6,0:1]
         q_km1 = x_km1[6:10,0:1].flatten()
         ab_km1 = x_km1[10:13,0:1]
         wb_km1 = x_km1[13:16,0:1]
+        k_km1 = x_km1[16:19,0:1]
 
-        a_nom = (a_meas-ab_km1)
         w_nom = (w_meas-wb_km1)
         C_nom = quaternion_matrix(q_km1)[0:3,0:3]
+        D_nom = np.diag(np.array([k_km1[1],k_km1[1],k_km1[2]]))
 
-        accel_rel = np.dot(C_nom,a_nom) + self.g
+        P = np.array([[1,0],[1,0],[0,1]])
+        e_3 = np.array([0,0,1]).reshape((3,1))
+        w_nom_x = skew_symm(w_nom)
+
+        mot_sum = np.sum(np.abs(mot_meas))
+        mot_sum_sq = np.sum(mot_meas**2)
+
+        v_rel_t = np.dot(C_nom,v_km1)
+        accel_rel = k_km1[0]/self.m*mot_sum_sq*e_3-mot_sum/self.m*np.dot(D_nom,v_km1)+np.dot(C_nom.T,self.g)-np.dot(w_nom_x,v_km1)
 
         # Propagate nominal state
-        r_check = r_km1 + self.dT*v_km1
+        r_check = r_km1 + self.dT*v_rel_t
         v_check = v_km1 + self.dT*accel_rel
         q_check = quaternion_norm(quaternion_multiply(q_km1,quaternion_exp(self.dT*w_nom.flatten())))
         ab_check = ab_km1
         wb_check = wb_km1
+        k_check = k_km1
 
-        x_check = np.vstack((r_check,v_check,q_check.reshape((4,1)),ab_check,wb_check))
+        x_check = np.vstack((r_check,v_check,q_check.reshape((4,1)),ab_check,wb_check,k_check))
 
         # Calculate Jacobians
         F_km1 = np.eye(self.num_states)
-        F_km1[0:3,3:6] = self.dT*np.eye(3)
-        F_km1[3:6,6:9] = -self.dT*np.dot(C_nom,skew_symm(a_nom.flatten()))
-        
+        # F_km1[0:3,3:6] = self.dT*np.eye(3)
+        # F_km1[3:6,6:9] = -self.dT*np.dot(C_nom,skew_symm(a_nom.flatten()))
+
+        F_km1[0:3,3:6] = self.dT*C_nom
+        F_km1[0:3,6:9] = -self.dT*np.dot(C_nom,skew_symm(v_km1))
+
+        F_km1[3:6,3:6] = np.eye(3)-self.dT(w_nom_x+mot_sum/self.m*D_nom)
+        F_km1[3:6,6:9] = self.dT*skew_symm(np.dot(C_nom.T,self.g))
+  
         w_int = self.dT*w_nom
         w_int_angle = np.linalg.norm(w_int)
         if w_int_angle<self.small_ang_tol:
@@ -411,13 +440,22 @@ class RelativePoseEKF(object):
             w_int_axis = w_int/w_int_angle
             F_km1[6:9,6:9] = rotation_matrix(-w_int_angle,w_int_axis)[0:3,0:3]
         
+        W_km1_base = np.vstack((np.zeros((3,6)),
+                                np.hstack(-skew_symm(v_km1),np.eye(3)),
+                                np.hstack(np.eye(3),np.zeros((3,3)))))
+
         if self.est_bias:
-            F_km1[3:6,9:12] = -self.dT*C_nom
+            # F_km1[3:6,9:12] = -self.dT*C_nom
+
+            F_km1[3:6,12:15] = -self.dT*skew_symm(v_km1)
+            F_km1[3:6,15:18] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
             F_km1[6:9,12:15] = -self.dT*np.eye(3)
         
-            W_km1 = block_diag(np.vstack((np.zeros((3,3)),-C_nom)),np.eye(9))
+            W_km1 = block_diag(W_km1_base,np.eye(6))
         else:
-            W_km1 = block_diag(np.vstack((np.zeros((3,3)),-C_nom)),np.eye(3))
+            F_km1[3:6,9:12] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+
+            W_km1 = W_km1_base
 
         # Propagate covariance
         P_check = np.linalg.multi_dot((F_km1,P_km1,F_km1.T)) + np.linalg.multi_dot((W_km1,self.Q,W_km1.T))
@@ -425,15 +463,10 @@ class RelativePoseEKF(object):
         # Return propagated state, covariance and relative acceleration (debugging)
         return x_check,P_check,accel_rel
 
-    def correction_step(self,x_check,P_check,r_c_tc,q_ct):
-        "Execute correction step of EKF. Fuse AprilTag measurements with predicted state"
+    def correction_step(self,x_check,P_check,u,r_c_tc=None,q_ct=None):
+        "Execute correction step of EKF. Fuse accelerometer and AprilTag measurements with predicted state"
 
-        # Fuse motion model prediction with AprilTag readings
-        # Convert AprilTag readings to vehicle state coordinates
-        q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
-        C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
-        # r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
-        r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
+        tag_available = (r_c_tc is not None) and (q_ct is not None)
 
         # Extract predicted state
         r_check = x_check[0:3,0:1]
@@ -441,30 +474,69 @@ class RelativePoseEKF(object):
         q_check = x_check[6:10,0:1].flatten()
         ab_check = x_check[10:13,0:1]
         wb_check = x_check[13:16,0:1]
+        k_check = x_check[16:19,0:1]
 
         C_check = quaternion_matrix(q_check)[0:3,0:3]
+        D_check = np.diag(np.array([k_check[1],k_check[1],k_check[2]]))
 
-        # Calculate observed perturbations in measurements
-        delta_r_obs = r_t_vt_obs - r_check
-        delta_q_obs = quaternion_multiply(quaternion_conjugate(q_check),q_tv_obs)
-        delta_theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+        P = np.array([[1,0],[1,0],[0,1]])
+        e_3 = np.array([0,0,1]).reshape((3,1))
 
-        # Calculate Jacobians
-        G_k = np.zeros((6,self.num_states))
-        N_k = block_diag(-np.dot(C_check,self.C_vc),self.C_vc)
-        N_k[0:3,3:6] = skew_symm(r_check) # add for direct orientation method
+        # Extract measurements, calculate deltas and Jacobians
+        a_obs = u[0:3,0:1]
+        w_meas = u[3:6,0:1]
+        mot_meas = u[6:10,0:1]
 
-        G_k[0:3,0:3] = np.eye(3)
-        # G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
-        G_k[3:6,6:9] = np.eye(3)
+        w_nom = (w_meas-wb_check)
+        w_nom_x = skew_symm(w_nom)
+        mot_sum = np.sum(np.abs(mot_meas))
+        mot_sum_sq = np.sum(mot_meas**2)
 
-        R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
+        a_check = k_check[0]/self.m*mot_sum_sq*e_3-mot_sum/self.m*np.dot(D_check,v_check)+np.dot(C_check.T,self.g)-np.dot(w_nom_x,v_check)+ab_check
+        delta_a_obs = a_obs-a_check
+        
+        G_k = np.zeros((9 if tag_available else 3,self.num_states))
+        G_k[0:3,3:6] = -(w_nom_x+mot_sum/self.m*D_check)
+        G_k[0:3,6:9] = skew_symm(np.dot(C_check.T,self.g))
+
+        if self.est_bias:
+            G_k[0:3,9:12] = np.eye(3)
+            G_k[0:3,12:15] = -skew_symm(v_check)
+            G_k[0:3,15:18] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+        else:
+            G_k[0:3,9:12] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+
+        if tag_available:
+            # Fuse motion model prediction with AprilTag readings
+            # Convert AprilTag readings to vehicle state coordinates
+            q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
+            C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3] # Add for direct orientation method
+            # r_t_vt_obs = -np.linalg.multi_dot((C_check,self.C_vc,r_c_tc))-np.dot(C_check,self.r_v_cv)
+            r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs,self.C_vc,r_c_tc))-np.dot(C_tv_obs,self.r_v_cv) # Flip to this for direct orientation method
+
+            # Calculate observed perturbations in measurements
+            delta_r_obs = r_t_vt_obs - r_check
+            delta_q_obs = quaternion_multiply(quaternion_conjugate(q_check),q_tv_obs)
+            delta_theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+
+            delta_y_obs = np.vstack((delta_a_obs,delta_r_obs,delta_theta_obs))
+
+            # Calculate Jacobians
+            G_k[3:6,0:3] = np.eye(3)
+            # G_k[0:3,6:9] = np.dot(C_check,skew_symm(np.dot(C_check.T,r_check))) # Remove for direct orientation method
+            G_k[6:9,6:9] = np.eye(3)
+
+            N_k = block_diag(np.eye(3),-np.dot(C_check,self.C_vc),self.C_vc)
+            N_k[3:6,6:9] = skew_symm(r_check) # add for direct orientation method
+            R_k = np.linalg.multi_dot((N_k,self.R,N_k.T))
+        else:
+            delta_y_obs = delta_a_obs
+            N_k = np.eye(3)
+            R_k = self.R_a
 
         # Form Kalman Gain and execute correction step
         Cov_meas_inv = np.linalg.inv(np.linalg.multi_dot((G_k,P_check,G_k.T))+R_k)
         K_k = np.linalg.multi_dot((P_check,G_k.T,Cov_meas_inv))
-
-        delta_y_obs = np.vstack((delta_r_obs,delta_theta_obs))
         
         P_hat = np.dot(np.eye(self.num_states)-np.dot(K_k,G_k),P_check)
         delta_x_hat = np.dot(K_k,delta_y_obs)
@@ -477,11 +549,13 @@ class RelativePoseEKF(object):
         if self.est_bias:
             ab_hat = ab_check + delta_x_hat[9:12,0:1]
             wb_hat = wb_check + delta_x_hat[12:15,0:1]
+            k_hat = k_check + delta_x_hat[15:18,0:1]
         else:
             ab_hat = np.zeros((3,1))
             wb_hat = np.zeros((3,1))
+            k_hat = k_check + delta_x_hat[9:12,0:1]
 
-        x_hat = np.vstack((r_hat,v_hat,q_hat.reshape((4,1)),ab_hat,wb_hat))
+        x_hat = np.vstack((r_hat,v_hat,q_hat.reshape((4,1)),ab_hat,wb_hat,k_hat))
         
         # Return corrected state and covariance
         return x_hat, P_hat

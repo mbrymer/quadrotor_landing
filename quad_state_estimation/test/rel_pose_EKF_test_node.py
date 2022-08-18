@@ -17,6 +17,7 @@ from rel_pose_EKF_test_class import RelativePoseEKF
 
 # Import message types
 from geometry_msgs.msg import PointStamped, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped, Vector3Stamped
+from mav_msgs.msg import Actuators
 from sensor_msgs.msg import Imu, CameraInfo
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64
@@ -37,7 +38,9 @@ class RelativePoseEKFNode(object):
 
         # Subscribers:
         self.IMU_topic = '/drone/imu'
-        self.magnetometer_topic = 'drone/fake_magnetometer'
+        # self.IMU_topic = '/mavros/imu/data_raw'
+        self.magnetometer_topic = '/drone/fake_magnetometer'
+        self.motor_speed_topic = '/drone/motor_speed'
         self.apriltag_topic = '/tag_detections'
         self.camera_info_topic = '/drone/camera_sensor/camera_na/camera_info'
 
@@ -45,10 +48,11 @@ class RelativePoseEKFNode(object):
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)
         self.camera_info_sub = rospy.Subscriber(self.camera_info_topic,CameraInfo,callback=self.camera_info_sub_callback)
         self.magnetometer_sub = rospy.Subscriber(self.magnetometer_topic,Vector3Stamped,callback=self.magnetometer_sub_callback)
+        self.motor_speed_sub = rospy.Subscriber(self.motor_speed_topic,Actuators,self.motor_sub_callback)
 
         # Publishers:
         self.rel_pose_topic = '/state_estimation/rel_pose_state'
-        self.rel_pose_report_topic = 'state_estimation/rel_pose_reported'
+        self.rel_pose_report_topic = '/state_estimation/rel_pose_reported'
         self.rel_vel_topic = '/state_estimation/rel_pose_velocity'
         self.rel_accel_topic = '/state_estimation/rel_pose_acceleration'
         self.IMU_bias_topic = '/state_estimation/IMU_bias'
@@ -72,6 +76,11 @@ class RelativePoseEKFNode(object):
         self.rel_pose_ekf.magnetometer_lock.acquire()
         self.rel_pose_ekf.magnetometer_msg = msg
         self.rel_pose_ekf.magnetometer_lock.release()
+
+    def motor_sub_callback(self,msg):
+        self.rel_pose_ekf.motor_speed_lock.acquire()
+        self.rel_pose_ekf.motor_msg = msg
+        self.rel_pose_ekf.motor_speed_lock.release()
 
     def camera_info_sub_callback(self,msg):
         self.camera_info_lock.acquire()
