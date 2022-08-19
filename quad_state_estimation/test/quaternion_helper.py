@@ -58,7 +58,8 @@ def quaternion_norm(unit_quat):
 
 def skew_symm(vector):
     "Return the 3x3 skew symmetric matrix of a vector"
-    skew = np.array([[0,-vector[2],vector[1]],
-                    [vector[2],0,-vector[0]],
-                    [-vector[1],vector[0],0]])
+    vector_flat = vector.flatten()
+    skew = np.array([[0,-vector_flat[2],vector_flat[1]],
+                    [vector_flat[2],0,-vector_flat[0]],
+                    [-vector_flat[1],vector_flat[0],0]])
     return skew

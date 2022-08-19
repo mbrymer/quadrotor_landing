@@ -43,6 +43,7 @@ class RelativePoseEKF(object):
         self.rel_pose_report_msg = PoseStamped()
         self.IMU_bias_msg = Imu()
         self.pred_length_msg = PointStamped()
+        self.k_est_msg = PointStamped()
 
         self.tf_broadcast = tf.TransformBroadcaster()
         self.tf_listener = tf.TransformListener()
@@ -61,10 +62,11 @@ class RelativePoseEKF(object):
         self.upd_per_meas = math.ceil(update_freq/measurement_freq)
         self.measurement_delay = 0.050 # s
         self.measurement_step_delay = max(int(round(self.measurement_delay/self.dT)),1)
+        self.k_init = np.array([8.5E-6,0,0]).reshape((3,1))
         self.est_bias = True
         self.accel_orien_corr = False
         self.use_magnetometer = False
-        self.multirate_EKF = True
+        self.multirate_EKF = False
 
         # State Storage
         if self.est_bias:
@@ -76,7 +78,7 @@ class RelativePoseEKF(object):
         self.q_nom = np.zeros(4)
         self.ab_nom = np.zeros((3,1))
         self.wb_nom = np.zeros((3,1))
-        self.k_nom = np.array([1,0,0]).reshape((3,1))
+        self.k_nom = self.k_init
         self.cov_pert = np.zeros((self.num_states,self.num_states))
 
         # self.ab_const = np.array([0.324,0.078,-0.1])
@@ -174,11 +176,13 @@ class RelativePoseEKF(object):
 
         # Tolerances and Constants
         self.small_ang_tol = 1E-10
-        self.m = 1 # kg
+        self.m = 1.52 # kg
         self.g = np.array([[0],[0],[-9.8]])
         self.pose_frame_name = "drone/rel_pose_est"
         self.pose_report_frame_name = "drone/rel_pose_report"
         self.pose_rel_frame_name = "target/tag_link"
+
+        self.t_0 = 0
 
     def filter_update(self):
         "Perform EKF update"
@@ -288,8 +292,13 @@ class RelativePoseEKF(object):
                             motor_curr.angular_velocities[2],motor_curr.angular_velocities[3]]).reshape((4,1))
         u_meas = np.vstack((a_meas,w_meas,mot_meas))
 
+        t_curr = imu_curr.header.stamp.to_sec()
+
+        if (t_curr-self.t_0)>13:
+            wait = 5
+
         # Execute prediction
-        x_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom))
+        x_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom,self.k_nom))
                                                 ,u_meas,self.cov_pert)
  
         if self.multirate_EKF:
@@ -312,6 +321,7 @@ class RelativePoseEKF(object):
         self.q_nom = x_hat[6:10,0:1].flatten()
         self.ab_nom = x_hat[10:13,0:1]
         self.wb_nom = x_hat[13:16,0:1]
+        self.k_nom = x_hat[16:19,0:1]
         self.cov_pert = P_hat
 
         if perform_tag_correction:
@@ -338,6 +348,7 @@ class RelativePoseEKF(object):
         self.rel_vel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=v_nom_tag[0], y=v_nom_tag[1], z = v_nom_tag[2]))
         self.rel_accel_msg = Vector3Stamped(header=curr_header, vector = Vector3(x=accel_rel[0], y=accel_rel[1], z = accel_rel[2]))
         self.pred_length_msg = PointStamped(header=curr_header,point = Point(x=self.upds_since_correction))
+        self.k_est_msg = PointStamped(header=curr_header,point = Point(x=self.k_nom[0],y=self.k_nom[1],z=self.k_nom[2]))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time,self.pose_frame_name,self.pose_rel_frame_name)
 
         if perform_tag_correction:
@@ -367,6 +378,7 @@ class RelativePoseEKF(object):
         C_tv_nom = quaternion_matrix(self.q_nom)[0:3,0:3]
         self.r_nom = -np.dot(C_tv_nom,np.dot(self.C_vc,r_c_tc)+self.r_v_cv)
         self.v_nom = np.zeros((3,1))
+        self.k_nom = self.k_init
 
         if reinit_bias:
             self.ab_nom = np.zeros((3,1))
@@ -375,12 +387,15 @@ class RelativePoseEKF(object):
         self.cov_pert = self.cov_init
 
         # Initialize state history with current state
-        self.x_hist = [np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom))]
+        self.x_hist = [np.vstack((self.r_nom,self.v_nom,self.q_nom.reshape((4,1)),self.ab_nom,self.wb_nom,self.k_nom))]
         self.u_hist = [np.zeros((6,1))]
         self.P_hist = [self.cov_pert]
 
         self.state_initialized = True
         self.filter_run_once = False
+
+        # Debug
+        self.t_0 = self.apriltag_msg.header.stamp.to_sec()
         self.state_lock.release()
 
     def prediction_step(self,x_km1,u,P_km1):
@@ -397,9 +412,9 @@ class RelativePoseEKF(object):
 
         w_nom = (w_meas-wb_km1)
         C_nom = quaternion_matrix(q_km1)[0:3,0:3]
-        D_nom = np.diag(np.array([k_km1[1],k_km1[1],k_km1[2]]))
+        D_nom = np.diag(np.array([k_km1[1,0],k_km1[1,0],k_km1[2,0]]))
 
-        P = np.array([[1,0],[1,0],[0,1]])
+        P_l = np.array([[1,0],[1,0],[0,1]])
         e_3 = np.array([0,0,1]).reshape((3,1))
         w_nom_x = skew_symm(w_nom)
 
@@ -427,7 +442,7 @@ class RelativePoseEKF(object):
         F_km1[0:3,3:6] = self.dT*C_nom
         F_km1[0:3,6:9] = -self.dT*np.dot(C_nom,skew_symm(v_km1))
 
-        F_km1[3:6,3:6] = np.eye(3)-self.dT(w_nom_x+mot_sum/self.m*D_nom)
+        F_km1[3:6,3:6] = np.eye(3)-self.dT*(w_nom_x+mot_sum/self.m*D_nom)
         F_km1[3:6,6:9] = self.dT*skew_symm(np.dot(C_nom.T,self.g))
   
         w_int = self.dT*w_nom
@@ -441,21 +456,21 @@ class RelativePoseEKF(object):
             F_km1[6:9,6:9] = rotation_matrix(-w_int_angle,w_int_axis)[0:3,0:3]
         
         W_km1_base = np.vstack((np.zeros((3,6)),
-                                np.hstack(-skew_symm(v_km1),np.eye(3)),
-                                np.hstack(np.eye(3),np.zeros((3,3)))))
+                                np.hstack((-skew_symm(v_km1),np.eye(3))),
+                                np.hstack((np.eye(3),np.zeros((3,3))))))
 
         if self.est_bias:
             # F_km1[3:6,9:12] = -self.dT*C_nom
 
             F_km1[3:6,12:15] = -self.dT*skew_symm(v_km1)
-            F_km1[3:6,15:18] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+            F_km1[3:6,15:18] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check.flatten()),P_l)))/self.m
             F_km1[6:9,12:15] = -self.dT*np.eye(3)
         
-            W_km1 = block_diag(W_km1_base,np.eye(6))
+            W_km1 = np.vstack((block_diag(W_km1_base,np.eye(6)),np.zeros((3,12))))
         else:
-            F_km1[3:6,9:12] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+            F_km1[3:6,9:12] = self.dT*np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check.flatten()),P_l)))/self.m
 
-            W_km1 = W_km1_base
+            W_km1 = np.vstack((W_km1_base,np.zeros((3,6))))
 
         # Propagate covariance
         P_check = np.linalg.multi_dot((F_km1,P_km1,F_km1.T)) + np.linalg.multi_dot((W_km1,self.Q,W_km1.T))
@@ -477,34 +492,29 @@ class RelativePoseEKF(object):
         k_check = x_check[16:19,0:1]
 
         C_check = quaternion_matrix(q_check)[0:3,0:3]
-        D_check = np.diag(np.array([k_check[1],k_check[1],k_check[2]]))
+        D_check = np.diag(np.array([k_check[1,0],k_check[1,0],k_check[2,0]]))
 
-        P = np.array([[1,0],[1,0],[0,1]])
+        P_l = np.array([[1,0],[1,0],[0,1]])
         e_3 = np.array([0,0,1]).reshape((3,1))
 
         # Extract measurements, calculate deltas and Jacobians
         a_obs = u[0:3,0:1]
-        w_meas = u[3:6,0:1]
         mot_meas = u[6:10,0:1]
 
-        w_nom = (w_meas-wb_check)
-        w_nom_x = skew_symm(w_nom)
         mot_sum = np.sum(np.abs(mot_meas))
         mot_sum_sq = np.sum(mot_meas**2)
 
-        a_check = k_check[0]/self.m*mot_sum_sq*e_3-mot_sum/self.m*np.dot(D_check,v_check)+np.dot(C_check.T,self.g)-np.dot(w_nom_x,v_check)+ab_check
+        a_check = k_check[0]/self.m*mot_sum_sq*e_3-mot_sum/self.m*np.dot(D_check,v_check)+ab_check
         delta_a_obs = a_obs-a_check
         
         G_k = np.zeros((9 if tag_available else 3,self.num_states))
-        G_k[0:3,3:6] = -(w_nom_x+mot_sum/self.m*D_check)
-        G_k[0:3,6:9] = skew_symm(np.dot(C_check.T,self.g))
+        G_k[0:3,3:6] = -mot_sum/self.m*D_check
 
         if self.est_bias:
             G_k[0:3,9:12] = np.eye(3)
-            G_k[0:3,12:15] = -skew_symm(v_check)
-            G_k[0:3,15:18] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+            G_k[0:3,15:18] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check.flatten()),P_l)))/self.m
         else:
-            G_k[0:3,9:12] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check),P)))/self.m
+            G_k[0:3,9:12] = np.hstack((mot_sum_sq*e_3,-mot_sum*np.dot(np.diag(v_check.flatten()),P_l)))/self.m
 
         if tag_available:
             # Fuse motion model prediction with AprilTag readings

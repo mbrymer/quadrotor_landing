@@ -57,12 +57,14 @@ class RelativePoseEKFNode(object):
         self.rel_accel_topic = '/state_estimation/rel_pose_acceleration'
         self.IMU_bias_topic = '/state_estimation/IMU_bias'
         self.pred_length_topic = '/state_estimation/upds_since_correction'
+        self.k_est_topic = '/state_estimation/k_estimate'
         self.rel_pose_pub = rospy.Publisher(self.rel_pose_topic,PoseWithCovarianceStamped,queue_size=1)
         self.rel_pose_report_pub = rospy.Publisher(self.rel_pose_report_topic,PoseStamped,queue_size=1)
         self.rel_vel_pub = rospy.Publisher(self.rel_vel_topic,Vector3Stamped,queue_size=1)
         self.rel_accel_pub = rospy.Publisher(self.rel_accel_topic,Vector3Stamped,queue_size=1)
         self.IMU_bias_pub = rospy.Publisher(self.IMU_bias_topic,Imu,queue_size=1)
         self.pred_length_pub = rospy.Publisher(self.pred_length_topic,PointStamped,queue_size=1)
+        self.k_est_pub = rospy.Publisher(self.k_est_topic,PointStamped,queue_size=1)
 
         # Timers:
         self.update_timer = rospy.Timer(rospy.Duration(1.0/self.update_freq),self.filter_update_callback)
@@ -116,6 +118,7 @@ class RelativePoseEKFNode(object):
         self.IMU_bias_pub.publish(self.rel_pose_ekf.IMU_bias_msg)
         self.rel_pose_report_pub.publish(self.rel_pose_ekf.rel_pose_report_msg)
         self.pred_length_pub.publish(self.rel_pose_ekf.pred_length_msg)
+        self.k_est_pub.publish(self.rel_pose_ekf.k_est_msg)
 
 if __name__ == '__main__':
     try:
