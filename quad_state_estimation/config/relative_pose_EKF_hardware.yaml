@@ -4,19 +4,19 @@ update_freq: 100.0 # Hz
 measurement_freq: 100.0 # Hz
 measurement_delay: 0.150 # s
 measurement_delay_max: 0.350 # s
-dyn_measurement_delay_offset: 0.075 # s
+dyn_measurement_delay_offset: 0.085 # s
 
 # Topics
 IMU_topic: "/mavros/imu/data_raw"
 
 # Noise Values
-Q_a_diag: [3.0E-7,3.0E-7,1.9E-6] # 2022-07-27 - On vehicle measurements, calculated deviation from smoothed sweeping trajectories. Bumped up slightly
-Q_w_diag: [2.5E-7,2.5E-7,3.0E-8]
-Q_ab_diag: [4.9E-9,4.9E-9,4.9E-9] # Allan deviation for IMU noise, corrected calculations, bumped up 2 orders of magnitude since seem too low
-Q_wb_diag: [5.9E-11,5.9E-11,5.9E-11]
+Q_a_diag: [0.00025,0.00025,0.00025] # Allan deviation for IMU noise with no motors running
+Q_w_diag: [0.00045,0.00045,0.00045]
+Q_ab_diag: [7.0E-6,7.0E-6,7.0E-6]
+Q_wb_diag: [4.4E-5,4.4E-5,4.4E-5]
 
-R_r_diag: [5.0E-9,5.0E-9,3.0E-8] # 2022-07-28 - Indoor measurements on big tag. Much lower than what had previously
-R_ang_diag: [1.0E-6,1.0E-6,7.0E-9] #
+R_r_diag: [0.0015,0.0015,0.006] # Small tag at ~1.5 m
+R_ang_diag: [0.0015,0.0015,0.04] #
 
 accel_bias_static: [0.20,-0.09,-0.03]
 gyro_bias_static: [-0.02,-0.01,0.0]

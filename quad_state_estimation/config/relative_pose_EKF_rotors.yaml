@@ -1,10 +1,10 @@
 # Relative Pose EKF Parameters
 # Rates
 update_freq: 100.0 # Hz
-measurement_freq: 10.0 # Hz
+measurement_freq: 15.0 # Hz
 measurement_delay: 0.030 # s
 measurement_delay_max: 0.200 # s
-dyn_measurement_delay_offset: 0.000 # s
+dyn_measurement_delay_offset: 0.005 # s
 
 # Topics
 IMU_topic: "/drone/imu"
