@@ -27,6 +27,8 @@ Eigen::Quaterniond quaternion_exp(Eigen::VectorXd pure_quat)
         unit_quat.vec() = pure_quat/norm*sin(norm/2);
     }
 
+    quaternion_norm(unit_quat);
+
     return unit_quat;
 }
 

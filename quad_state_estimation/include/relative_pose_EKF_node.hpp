@@ -39,6 +39,7 @@ class RelativePoseEKFNode
         std::string rel_accel_topic;
         std::string IMU_bias_topic;
         std::string pred_length_topic;
+        std::string meas_delay_topic;
 
         std::string pose_frame_name;
         std::string pose_parent_frame_name;
@@ -55,6 +56,7 @@ class RelativePoseEKFNode
         ros::Publisher rel_accel_pub;
         ros::Publisher IMU_bias_pub;
         ros::Publisher pred_length_pub;
+        ros::Publisher meas_delay_pub;
 
         ros::Timer filter_update_timer;
 

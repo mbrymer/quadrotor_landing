@@ -16,17 +16,23 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     node.param<std::string>("rel_accel_topic",rel_accel_topic,"/state_estimation/rel_pose_acceleration");
     node.param<std::string>("IMU_bias_topic",IMU_bias_topic,"/state_estimation/IMU_bias");
     node.param<std::string>("upds_since_correction_topic",pred_length_topic,"/state_estimation/upds_since_correction");
+    node.param<std::string>("meas_delay_topic",meas_delay_topic,"/state_estimation/measurement_delay");
+
     node.param<std::string>("pose_frame_name",pose_frame_name,"drone/rel_pose_est");
     node.param<std::string>("pose_parent_frame_name",pose_parent_frame_name,"target/tag_link");
     node.param<std::string>("pose_report_frame_name",pose_report_frame_name,"drone/rel_pose_report");
 
     double measurement_freq;
     double measurement_delay;
+    double measurement_delay_max;
+    double dyn_measurement_delay_offset;
     bool limit_measurement_freq;
 
     node.param<double>("update_freq",update_freq,100.0);
     node.param<double>("measurement_freq",measurement_freq,10.0);
     node.param<double>("measurement_delay",measurement_delay,0.010);
+    node.param<double>("measurement_delay_max",measurement_delay_max,0.200);
+    node.param<double>("dyn_measurement_delay_offset",dyn_measurement_delay_offset,0.0);
     node.param<bool>("limit_measurement_freq",limit_measurement_freq,false);
 
     // Set publishers, subscribers and timers
@@ -39,6 +45,7 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_accel_pub = node.advertise<geometry_msgs::Vector3Stamped>(rel_accel_topic,1);
     IMU_bias_pub = node.advertise<sensor_msgs::Imu>(IMU_bias_topic,1);
     pred_length_pub = node.advertise<geometry_msgs::PointStamped>(pred_length_topic,1);
+    meas_delay_pub = node.advertise<geometry_msgs::PointStamped>(meas_delay_topic,1);
 
     filter_update_timer = node.createTimer(ros::Duration(1.0/update_freq),&RelativePoseEKFNode::FilterUpdateCallback,this);
 
@@ -46,12 +53,15 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
     rel_pose_ekf.update_freq = update_freq;
     rel_pose_ekf.measurement_freq = measurement_freq;
     rel_pose_ekf.measurement_delay = measurement_delay;
+    rel_pose_ekf.measurement_delay_max = measurement_delay_max;
+    rel_pose_ekf.dyn_measurement_delay_offset = dyn_measurement_delay_offset;
     rel_pose_ekf.limit_measurement_freq = limit_measurement_freq;
 
     node.param<bool>("est_bias",rel_pose_ekf.est_bias,true);
     node.param<bool>("corner_margin_enbl",rel_pose_ekf.corner_margin_enbl,true);
     node.param<bool>("direct_orien_method",rel_pose_ekf.direct_orien_method,false);
     node.param<bool>("multirate_ekf",rel_pose_ekf.multirate_ekf,false);
+    node.param<bool>("dynamic_meas_delay",rel_pose_ekf.dynamic_meas_delay,false);
 
     std::vector<double> Q_a_diag;
     std::vector<double> Q_w_diag;
@@ -101,12 +111,29 @@ RelativePoseEKFNode::RelativePoseEKFNode(ros::NodeHandle nh) : node(nh)
 
     node.getParam("camera_width",rel_pose_ekf.camera_width);
     node.getParam("camera_height",rel_pose_ekf.camera_height);
-    node.getParam("tag_width",rel_pose_ekf.tag_width);
-    node.getParam("tag_in_view_margin",rel_pose_ekf.tag_in_view_margin);
 
     std::vector<double> camera_K;
     node.getParam("camera_K",camera_K);
     rel_pose_ekf.camera_K = Eigen::Matrix3d(camera_K.data()).transpose();
+
+    node.getParam("n_tags",rel_pose_ekf.n_tags);
+    node.getParam("tag_in_view_margin",rel_pose_ekf.tag_in_view_margin);
+
+    std::vector<double> tag_widths;
+    std::vector<double> tag_positions;
+
+    node.getParam("tag_widths",tag_widths);
+    node.getParam("tag_positions",tag_positions);
+
+    rel_pose_ekf.tag_widths = Eigen::Map<Eigen::VectorXd, Eigen::Unaligned>(tag_widths.data(),tag_widths.size());
+    rel_pose_ekf.tag_positions.resize(3,rel_pose_ekf.n_tags); // Brute force copy. TODO: Figure out the proper Eigen one liner for this
+    for (int i = 0; i<rel_pose_ekf.n_tags; ++i)
+    {
+        for (int j = 0; j<3; ++j)
+        {
+            rel_pose_ekf.tag_positions(j,i) = tag_positions[3*i+j];
+        }
+    }
 
     rel_pose_ekf.initialize_params();
 
@@ -136,6 +163,7 @@ void RelativePoseEKFNode::AprilTagSubCallback(const apriltag_ros::AprilTagDetect
         rel_pose_ekf.apriltag_orien.x() = apriltag_msg.detections[0].pose.pose.pose.orientation.x;
         rel_pose_ekf.apriltag_orien.y() = apriltag_msg.detections[0].pose.pose.pose.orientation.y;
         rel_pose_ekf.apriltag_orien.z() = apriltag_msg.detections[0].pose.pose.pose.orientation.z;
+        rel_pose_ekf.apriltag_time = apriltag_msg.header.stamp.toSec();
         rel_pose_ekf.measurement_ready = true;
 
         if(!rel_pose_ekf.state_initialized)
@@ -151,7 +179,7 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
 {
     // Update filter
     // std::cout << "In the filter update callback" << std::endl;
-    rel_pose_ekf.filter_update();
+    rel_pose_ekf.filter_update(ros::Time::now().toSec());
 
     if (rel_pose_ekf.filter_active)
     {
@@ -236,7 +264,12 @@ void RelativePoseEKFNode::FilterUpdateCallback(const ros::TimerEvent &event)
             rel_pose_report_msg.pose.orientation.z = rel_pose_ekf.q_tv_obs.z();
             rel_pose_report_msg.pose.orientation.w = rel_pose_ekf.q_tv_obs.w();
 
+            geometry_msgs::PointStamped meas_delay_msg;
+            meas_delay_msg.header = new_header;
+            meas_delay_msg.point.x = rel_pose_ekf.measurement_delay_curr;
+
             rel_pose_report_pub.publish(rel_pose_report_msg);
+            meas_delay_pub.publish(meas_delay_msg);
 
             tf::Transform rel_pose_report_tf;
             rel_pose_report_tf.setOrigin(tf::Vector3(rel_pose_ekf.r_t_vt_obs(0),rel_pose_ekf.r_t_vt_obs(1),rel_pose_ekf.r_t_vt_obs(2)));
