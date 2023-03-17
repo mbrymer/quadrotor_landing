@@ -56,7 +56,7 @@ class RelativePoseEKF(object):
         self.dT = 1/update_freq
         self.measurement_freq = measurement_freq
         self.upd_per_meas = math.ceil(update_freq/measurement_freq)
-        self.measurement_delay = 0.050 # s
+        self.measurement_delay = 0.060 # s
         self.measurement_step_delay = max(int(round(self.measurement_delay/self.dT)),1)
         self.est_bias = True
         self.accel_orien_corr = False
