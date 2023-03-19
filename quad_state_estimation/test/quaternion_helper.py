@@ -56,9 +56,23 @@ def quaternion_norm(unit_quat):
     else:
         return unit_quat_norm
 
+def identity_quaternion():
+    "Identity quaternion"
+    q = np.zeros(4)
+    q[3] = 1
+    return q
+
 def skew_symm(vector):
     "Return the 3x3 skew symmetric matrix of a vector"
     skew = np.array([[0,-vector[2],vector[1]],
                     [vector[2],0,-vector[0]],
                     [-vector[1],vector[0],0]])
     return skew
+
+def vex_symm(skew):
+    "Return the vex operator of a skew symmetric matrix"
+    vex = np.zeros((3,1))
+    vex[0,0] = (skew[2,1] - skew[1,2]) / 2
+    vex[1,0] = (skew[0,2] - skew[2,0]) / 2
+    vex[2,0] = (skew[1,0] - skew[0,1]) / 2
+    return vex
