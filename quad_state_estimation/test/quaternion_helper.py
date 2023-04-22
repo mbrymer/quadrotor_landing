@@ -64,9 +64,10 @@ def identity_quaternion():
 
 def skew_symm(vector):
     "Return the 3x3 skew symmetric matrix of a vector"
-    skew = np.array([[0,-vector[2],vector[1]],
-                    [vector[2],0,-vector[0]],
-                    [-vector[1],vector[0],0]])
+    vector_flatten = vector.flatten()
+    skew = np.array([[0,-vector_flatten[2],vector_flatten[1]],
+                    [vector_flatten[2],0,-vector_flatten[0]],
+                    [-vector_flatten[1],vector_flatten[0],0]])
     return skew
 
 def vex_symm(skew):
