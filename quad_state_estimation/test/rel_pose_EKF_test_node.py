@@ -15,6 +15,7 @@ from tf.transformations import quaternion_from_euler, euler_from_quaternion, qua
 
 from rel_pose_EKF_test_class import RelativePoseEKF
 from mahony_filter import MahonyFilter
+from attitude_EKF import AttitudeEKF
 
 # Import message types
 from geometry_msgs.msg import PointStamped, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped, Vector3Stamped
@@ -33,6 +34,7 @@ class RelativePoseEKFNode(object):
         # Objects:
         self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
         self.mahony_filter = MahonyFilter(self.update_freq)
+        self.attitude_EKF = AttitudeEKF(self.update_freq)
 
         self.camera_info_msg = CameraInfo()
         self.camera_info_lock = threading.Lock()
@@ -57,6 +59,7 @@ class RelativePoseEKFNode(object):
         self.pred_length_topic = '/state_estimation/upds_since_correction'
         self.mahony_filter_topic = '/state_estimation/mahony_rel_pose'
         self.mahony_filter_bias_topic = '/state_estimation/mahony_IMU_bias'
+        self.attitude_EKF_topic = '/state_estimation/attitude_EKF_rel_pose'
 
         self.rel_pose_pub = rospy.Publisher(self.rel_pose_topic,PoseWithCovarianceStamped,queue_size=1)
         self.rel_pose_report_pub = rospy.Publisher(self.rel_pose_report_topic,PoseStamped,queue_size=1)
@@ -66,9 +69,10 @@ class RelativePoseEKFNode(object):
         self.pred_length_pub = rospy.Publisher(self.pred_length_topic,PointStamped,queue_size=1)
         self.mahony_filter_pose_pub = rospy.Publisher(self.mahony_filter_topic,PoseStamped,queue_size=1)
         self.mahony_filter_bias_pub = rospy.Publisher(self.mahony_filter_bias_topic,Imu,queue_size=1)
+        self.attitude_EKF_pose_pub = rospy.Publisher(self.attitude_EKF_topic,PoseStamped,queue_size=1)
 
         # Timers:
-        self.update_timer = rospy.Timer(rospy.Duration(1.0/self.update_freq),self.filter_update_callback)
+        self.update_timer = rospy.Timer(rospy.Duration(1.0 / self.update_freq), self.filter_update_callback)
 
     def IMU_sub_callback(self,msg):
         self.rel_pose_ekf.imu_lock.acquire()
@@ -78,6 +82,10 @@ class RelativePoseEKFNode(object):
         self.mahony_filter.imu_lock.acquire()
         self.mahony_filter.imu_msg = msg
         self.mahony_filter.imu_lock.release()
+
+        self.attitude_EKF.imu_lock.acquire()
+        self.attitude_EKF.imu_msg = msg
+        self.attitude_EKF.imu_lock.release()
 
     def magnetometer_sub_callback(self,msg):
         self.rel_pose_ekf.magnetometer_lock.acquire()
@@ -111,6 +119,7 @@ class RelativePoseEKFNode(object):
         # Execute filter updates
         self.rel_pose_ekf.filter_update()
         self.mahony_filter.filter_update()
+        self.attitude_EKF.filter_update()
 
         # Publish state estimate
         self.rel_pose_pub.publish(self.rel_pose_ekf.rel_pose_msg)
@@ -121,6 +130,7 @@ class RelativePoseEKFNode(object):
         self.pred_length_pub.publish(self.rel_pose_ekf.pred_length_msg)
         self.mahony_filter_pose_pub.publish(self.mahony_filter.pose_msg)
         self.mahony_filter_bias_pub.publish(self.mahony_filter.imu_bias_msg)
+        self.attitude_EKF_pose_pub.publish(self.attitude_EKF.pose_msg)
 
 if __name__ == '__main__':
     try:
