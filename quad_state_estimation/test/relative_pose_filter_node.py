@@ -31,9 +31,8 @@ class RelativePoseFilterNode(object):
         self.measurement_freq = 10 # Hz
 
         # Objects:
-        self.rel_pose_ekf = RelativePoseEKF(self.update_freq,self.measurement_freq)
+        self.rel_pose_filter = RelativePoseFilter(self.update_freq, self.measurement_freq)
         self.mahony_filter = MahonyFilter(self.update_freq)
-        self.attitude_EKF = AttitudeEKF(self.update_freq)
 
         self.camera_info_msg = CameraInfo()
         self.camera_info_lock = threading.Lock()
@@ -47,15 +46,18 @@ class RelativePoseFilterNode(object):
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)
         self.camera_info_sub = rospy.Subscriber(self.camera_info_topic,CameraInfo,callback=self.camera_info_sub_callback)
-        self.magnetometer_sub = rospy.Subscriber(self.magnetometer_topic,Vector3Stamped,callback=self.magnetometer_sub_callback)
 
         # Publishers:
         self.rel_pose_topic = '/state_estimation/rel_pose_state'
         self.rel_pose_report_topic = 'state_estimation/rel_pose_reported'
         self.rel_vel_topic = '/state_estimation/rel_pose_velocity'
         self.rel_accel_topic = '/state_estimation/rel_pose_acceleration'
+        self.mu_check_pose_topic = '/state_estimation/mu_check_rel_pose'
+        self.mu_check_vel_topic = '/state_estimation/mu_check_rel_pose_velocity'
         self.IMU_bias_topic = '/state_estimation/IMU_bias'
         self.pred_length_topic = '/state_estimation/upds_since_correction'
+        self.timing_topic = '/state_estimation/pose_filter_timing'
+
         self.mahony_filter_topic = '/state_estimation/mahony_rel_pose'
         self.mahony_filter_bias_topic = '/state_estimation/mahony_IMU_bias'
         self.attitude_EKF_topic = '/state_estimation/attitude_EKF_rel_pose'
@@ -64,8 +66,12 @@ class RelativePoseFilterNode(object):
         self.rel_pose_report_pub = rospy.Publisher(self.rel_pose_report_topic,PoseStamped,queue_size=1)
         self.rel_vel_pub = rospy.Publisher(self.rel_vel_topic,Vector3Stamped,queue_size=1)
         self.rel_accel_pub = rospy.Publisher(self.rel_accel_topic,Vector3Stamped,queue_size=1)
+        self.mu_check_pose_pub = rospy.Publisher(self.mu_check_pose_topic, PoseWithCovarianceStamped, queue_size = 1)
+        self.mu_check_vel_topic = rospy.Publisher(self.mu_check_vel_topic, Vector3Stamped, queue_size=1)
         self.IMU_bias_pub = rospy.Publisher(self.IMU_bias_topic,Imu,queue_size=1)
         self.pred_length_pub = rospy.Publisher(self.pred_length_topic,PointStamped,queue_size=1)
+        self.timing_pub = rospy.Publisher(self.timing_topic, PointStamped, queue_size = 1)
+
         self.mahony_filter_pose_pub = rospy.Publisher(self.mahony_filter_topic,PoseStamped,queue_size=1)
         self.mahony_filter_bias_pub = rospy.Publisher(self.mahony_filter_bias_topic,Imu,queue_size=1)
         self.attitude_EKF_pose_pub = rospy.Publisher(self.attitude_EKF_topic,PoseStamped,queue_size=1)
@@ -74,22 +80,13 @@ class RelativePoseFilterNode(object):
         self.update_timer = rospy.Timer(rospy.Duration(1.0 / self.update_freq), self.filter_update_callback)
 
     def IMU_sub_callback(self,msg):
-        self.rel_pose_ekf.imu_lock.acquire()
-        self.rel_pose_ekf.IMU_msg = msg
-        self.rel_pose_ekf.imu_lock.release()
+        self.rel_pose_filter.imu_lock.acquire()
+        self.rel_pose_filter.IMU_msg = msg
+        self.rel_pose_filter.imu_lock.release()
 
         self.mahony_filter.imu_lock.acquire()
         self.mahony_filter.imu_msg = msg
         self.mahony_filter.imu_lock.release()
-
-        self.attitude_EKF.imu_lock.acquire()
-        self.attitude_EKF.imu_msg = msg
-        self.attitude_EKF.imu_lock.release()
-
-    def magnetometer_sub_callback(self,msg):
-        self.rel_pose_ekf.magnetometer_lock.acquire()
-        self.rel_pose_ekf.magnetometer_msg = msg
-        self.rel_pose_ekf.magnetometer_lock.release()
 
     def camera_info_sub_callback(self,msg):
         self.camera_info_lock.acquire()
@@ -98,44 +95,39 @@ class RelativePoseFilterNode(object):
         
     def apriltag_sub_callback(self,msg):
         if len(msg.detections)>0:
-            self.rel_pose_ekf.apriltag_lock.acquire()
-            # self.camera_info_lock.acquire()
-            self.rel_pose_ekf.apriltag_msg = msg
-            # camera_info_header = copy.deepcopy(self.camera_info_msg.header)
-            # curr_time = rospy.get_rostime()
-            # rospy.loginfo('Received detection. Header time = {:.3f}, current time = {:.3f}'.format(msg.header.stamp.to_sec(),curr_time.to_sec()))
-            # rospy.loginfo('Camera info delay: {:.1f} ms to AprilTag, {:.1f} ms to now'.format(1000*(msg.header.stamp.to_sec()-camera_info_header.stamp.to_sec()),
-            #                                                                                 1000*(curr_time.to_sec()-camera_info_header.stamp.to_sec())))
-            self.rel_pose_ekf.measurement_ready = True
+            self.rel_pose_filter.apriltag_lock.acquire()
+            self.rel_pose_filter.apriltag_msg = msg
+
+            self.rel_pose_filter.measurement_ready = True
         
-            if not self.rel_pose_ekf.state_initialized:
-                self.rel_pose_ekf.initialize_state(False)
+            if not self.rel_pose_filter.state_initialized:
+                self.rel_pose_filter.initialize_state(False)
             
-            self.rel_pose_ekf.apriltag_lock.release()
-            # self.camera_info_lock.release()
+            self.rel_pose_filter.apriltag_lock.release()
 
     def filter_update_callback(self,event):
         # Execute filter updates
-        self.rel_pose_ekf.filter_update()
         self.mahony_filter.filter_update()
-        self.attitude_EKF.filter_update()
+        self.rel_pose_filter.filter_update()
 
         # Publish state estimate
-        self.rel_pose_pub.publish(self.rel_pose_ekf.rel_pose_msg)
-        self.rel_vel_pub.publish(self.rel_pose_ekf.rel_vel_msg)
-        self.rel_accel_pub.publish(self.rel_pose_ekf.rel_accel_msg)
-        self.IMU_bias_pub.publish(self.rel_pose_ekf.IMU_bias_msg)
-        self.rel_pose_report_pub.publish(self.rel_pose_ekf.rel_pose_report_msg)
-        self.pred_length_pub.publish(self.rel_pose_ekf.pred_length_msg)
+        self.rel_pose_pub.publish(self.rel_pose_filter.rel_pose_msg)
+        self.rel_pose_report_pub.publish(self.rel_pose_filter.rel_pose_report_msg)
+        self.rel_vel_pub.publish(self.rel_pose_filter.rel_vel_msg)
+        self.rel_accel_pub.publish(self.rel_pose_filter.rel_accel_msg)
+        self.mu_check_pose_pub.publish(self.rel_pose_filter.mu_check_pose_msg)
+        self.mu_check_vel_topic.publish(self.rel_pose_filter.mu_check_vel_msg)
+        self.IMU_bias_pub.publish(self.rel_pose_filter.IMU_bias_msg)
+        self.pred_length_pub.publish(self.rel_pose_filter.pred_length_msg)
+        self.timing_pub.publish(self.rel_pose_filter.timing_msg)
         self.mahony_filter_pose_pub.publish(self.mahony_filter.pose_msg)
         self.mahony_filter_bias_pub.publish(self.mahony_filter.imu_bias_msg)
-        self.attitude_EKF_pose_pub.publish(self.attitude_EKF.pose_msg)
 
 if __name__ == '__main__':
     try:
         # Initialize node
-        rospy.init_node('rel_pose_EKF_test')
-        RelativePoseEKFNode()
+        rospy.init_node('relative_pose_filter_python')
+        RelativePoseFilterNode()
         rospy.spin()
     except rospy.ROSInterruptException:
 	    pass

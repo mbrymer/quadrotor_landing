@@ -1,0 +1,5 @@
+<launch>
+
+    <node name="rel_pose_filter" pkg = "quad_state_estimation" type = "relative_pose_filter_node.py" output = "screen"/>
+
+</launch>
