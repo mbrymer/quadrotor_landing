@@ -16,10 +16,10 @@ import tf
 
 from scipy.linalg import block_diag
 from quaternion_helper import quaternion_exp, skew_symm, quaternion_log, quaternion_norm, exponential_map, identity_quaternion
-from tf.transformations import quaternion_matrix, quaternion_multiply, quaternion_about_axis, quaternion_conjugate, rotation_matrix
+from tf.transformations import quaternion_matrix, quaternion_multiply, quaternion_about_axis, quaternion_conjugate, rotation_matrix, euler_from_quaternion
 
 # Import message types
-from geometry_msgs.msg import Point, PointStamped, Vector3, Vector3Stamped, Quaternion, PoseWithCovariance, PoseWithCovarianceStamped, Pose, PoseStamped
+from geometry_msgs.msg import Point, PointStamped, Vector3, Vector3Stamped, Quaternion, PoseWithCovariance, PoseWithCovarianceStamped, Pose, PoseStamped, TwistStamped
 from sensor_msgs.msg import Imu
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64, Header
@@ -32,7 +32,8 @@ class RelativePoseFilter(object):
         # Inputs
         self.IMU_msg = Imu()
         self.apriltag_msg = AprilTagDetectionArray()
-        # self.gps_speed_msg = Vector3Stamped()
+        self.gps_speed_msg = TwistStamped()
+        self.mahony_quaternion = identity_quaternion()
 
         # Outputs
         self.rel_pose_msg = PoseWithCovarianceStamped()
@@ -52,7 +53,7 @@ class RelativePoseFilter(object):
         self.state_lock = threading.Lock()
         self.imu_lock = threading.Lock()
         self.apriltag_lock = threading.Lock()
-        # self.gps_speed_lock = threading.Lock()
+        self.gps_speed_lock = threading.Lock()
 
         # Filter Parameters
         self.update_freq = update_freq
@@ -106,10 +107,11 @@ class RelativePoseFilter(object):
         self.R_r = np.diag(np.array([0.005,0.005,0.015])) # Sim Values
         self.R_ang = np.diag(np.array([0.0025,0.0025,0.025]))
         self.R_mahony = 0.01 * np.eye(2)
-        self.R_gps = 0.1
         
         self.R_tag = block_diag(self.R_r, self.R_ang)
         self.L_tag = np.linalg.cholesky(self.R_tag)
+        self.L_mahony = np.linalg.cholesky(self.R_mahony)
+        self.L_gps = 0.1 * np.eye(2)
 
         # State, input, measurement and covariance histories for multi-rate EKF
         self.x_hist = [np.zeros((self.num_states + 1, 1))]
@@ -147,6 +149,7 @@ class RelativePoseFilter(object):
         # Counters/flags
         self.state_initialized = False
         self.apriltag_ready = False
+        self.gps_ready = False
         self.filter_run_once = False
         self.upds_since_correction = 0
         self.pub_counter = 0
@@ -156,6 +159,17 @@ class RelativePoseFilter(object):
         self.pose_frame_name = "drone/rel_pose_est"
         self.pose_report_frame_name = "drone/rel_pose_report"
         self.pose_rel_frame_name = "target/tag_link"
+
+        # Bias convergence
+        self.accel_bias_converged = False
+        self.bias_window_obs_once = False
+        self.bias_window_duration = 10
+        self.bias_convergence_tol = 3
+        self.bias_ind_curr = 0
+        self.bias_window_size = int(self.bias_window_duration / self.dT)
+        self.bias_hist_x = np.zeros(self.bias_window_size)
+        self.bias_hist_y = np.zeros(self.bias_window_size)
+        self.bias_hist_z = np.zeros(self.bias_window_size)
 
         # Timing
         self.time_correction = 0.0
@@ -172,21 +186,41 @@ class RelativePoseFilter(object):
         # Clamp data for this update, decide if correction happens this step
         self.imu_lock.acquire()
         self.apriltag_lock.acquire()
-        # self.gps_speed_lock.acquire()
+        self.gps_speed_lock.acquire()
 
-        imu_curr = self.IMU_msg
-        # gps_speed_curr = self.gps_speed_msg
-        if self.measurement_ready and (self.upds_since_correction+1) >= self.upd_per_meas and self.filter_run_once:
+        # Unpack IMU
+        a_meas = np.array([self.IMU_msg.linear_acceleration.x,
+                           self.IMU_msg.linear_acceleration.y,
+                           self.IMU_msg.linear_acceleration.z]).reshape((3,1))
+        w_meas = np.array([self.IMU_msg.angular_velocity.x,
+                           self.IMU_msg.angular_velocity.y,
+                           self.IMU_msg.angular_velocity.z]).reshape((3,1))
+        imu_meas = np.vstack((a_meas,w_meas))
+
+        # Unpack GPS
+        gps_speed_meas = None
+        gps_speed_xy = None
+        if self.gps_ready:
+            gps_speed_meas = np.array([self.gps_speed_msg.twist.linear.x,
+                                    self.gps_speed_msg.twist.linear.y,
+                                    self.gps_speed_msg.twist.linear.z]).reshape((3,1))
+            gps_speed_xy = np.linalg.norm(gps_speed_meas[0:2])
+
+            self.gps_ready = False
+
+        use_apriltag = False
+        r_c_tc = None
+        q_ct = None
+        if self.apriltag_ready and (self.upds_since_correction + 1) >= self.upd_per_meas and self.filter_run_once:
             # Extract AprilTag reading, build tag pose matrix
-            meas_curr = self.apriltag_msg
-            self.measurement_ready = False
-            r_c_tc = np.array([[meas_curr.detections[0].pose.pose.pose.position.x],
-                                [meas_curr.detections[0].pose.pose.pose.position.y],
-                                [meas_curr.detections[0].pose.pose.pose.position.z]])
-            q_ct = np.array([meas_curr.detections[0].pose.pose.pose.orientation.x,
-                                meas_curr.detections[0].pose.pose.pose.orientation.y,
-                                meas_curr.detections[0].pose.pose.pose.orientation.z,
-                                meas_curr.detections[0].pose.pose.pose.orientation.w])
+            self.apriltag_ready = False
+            r_c_tc = np.array([[self.apriltag_msg.detections[0].pose.pose.pose.position.x],
+                                [self.apriltag_msg.detections[0].pose.pose.pose.position.y],
+                                [self.apriltag_msg.detections[0].pose.pose.pose.position.z]])
+            q_ct = np.array([self.apriltag_msg.detections[0].pose.pose.pose.orientation.x,
+                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.y,
+                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.z,
+                                self.apriltag_msg.detections[0].pose.pose.pose.orientation.w])
             T_ct = quaternion_matrix(q_ct)
             T_ct[0:3,3:4] = r_c_tc
             T_ct[3,3] = 1
@@ -200,20 +234,18 @@ class RelativePoseFilter(object):
             min_px = np.min(tag_corners_px[0:2,:],axis=1)
             max_px = np.max(tag_corners_px[0:2,:],axis=1)
 
-            perform_apriltag_correction = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+            use_apriltag = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
                                 min_px[1]>self.camera_height*self.tag_in_view_margin and
                                 max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
                                 max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
 
-        else:
-            perform_apriltag_correction = False
-
         self.imu_lock.release()
         self.apriltag_lock.release()
-        # self.gps_speed_lock.release() 
+        self.gps_speed_lock.release() 
 
         # With multi-rate EKF need to perform correction first since it changes state we propagate from on this timestep
-        if self.multirate_EKF and perform_apriltag_correction:
+        # TODO: Bring GPS in here as well
+        if self.multirate_EKF and use_apriltag:
             # Extract state and covariance prediction at the time the measurement was recorded
             ind_meas = max(len(self.x_hist) - self.measurement_step_delay,0)
             x_check = self.x_hist[ind_meas]
@@ -257,16 +289,11 @@ class RelativePoseFilter(object):
 
         # Current timestep    
         # Prediction step
-        # Append the current measurement for this timestep
-        a_meas = np.array([imu_curr.linear_acceleration.x,imu_curr.linear_acceleration.y,
-                            imu_curr.linear_acceleration.z]).reshape((3,1))
-        w_meas = np.array([imu_curr.angular_velocity.x,imu_curr.angular_velocity.y,
-                            imu_curr.angular_velocity.z]).reshape((3,1))
-        imu_meas = np.vstack((a_meas,w_meas))
-
-        # Execute prediction
         x_check, mu_check, P_check, accel_rel = self.prediction_step(np.vstack((self.r_nom, self.v_nom, self.q_nom.reshape((4,1)), self.ab_nom, self.wb_nom))
                                                 , imu_meas, self.cov_pert)
+        
+        self.time_prediction = time.time() - tic
+        tic = time.time()
 
         if self.multirate_EKF:
             # Append prediction to state history, store in latest state
@@ -281,9 +308,14 @@ class RelativePoseFilter(object):
             self.ab_nom = x_check[10:13,0:1]
             self.wb_nom = x_check[13:16,0:1]
             self.cov_pert = P_check
-        elif perform_apriltag_correction:
+        elif use_apriltag or (gps_speed_xy is not None):
             # Single state EKF, perform correction step and store corrected estimate
-            x_hat, P_hat = self.correction_step(x_check, mu_check, P_check, 0.0, 0.0, 0.0, r_c_tc, q_ct)
+            roll_mahony, pitch_mahony, yaw_mahony = euler_from_quaternion(self.mahony_quaternion)
+            x_hat, P_hat = self.correction_step(x_check, mu_check, P_check, roll_mahony, pitch_mahony, gps_speed_xy, r_c_tc, q_ct)
+
+            self.time_correction = time.time() - tic
+            tic = time.time()
+
             self.r_nom = x_hat[0:3, 0:1]
             self.v_nom = x_hat[3:6, 0:1]
             self.q_nom = x_hat[6:10, 0:1].flatten()
@@ -300,12 +332,10 @@ class RelativePoseFilter(object):
             self.wb_nom = x_check[13:16, 0:1]
             self.cov_pert = P_check
 
-        if perform_apriltag_correction:
+        if use_apriltag:
             self.upds_since_correction = 0
         else:
             self.upds_since_correction += 1
-
-        self.time_prediction = time.time() - tic
 
         # Pack estimate up into messages and publish transform
         curr_time = rospy.get_rostime()
@@ -333,7 +363,7 @@ class RelativePoseFilter(object):
         self.timing_msg = PointStamped(header = curr_header, point = Point(x = self.time_prediction * 1.0E3, y = self.time_correction * 1.0E3, z = self.time_filter_recalculate * 1.0E3))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time, self.pose_frame_name, self.pose_rel_frame_name)
 
-        if perform_apriltag_correction:
+        if use_apriltag:
             # Report out observed vehicle position and orientation from AprilTag readings alone
             q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc, q_ct)))
             C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3]
@@ -452,20 +482,23 @@ class RelativePoseFilter(object):
         # Return propagated nominal state, perturbation state and relative acceleration (debugging)
         return x_check, mu_check, P_check, accel_rel
 
-    def correction_step(self, x_check, mu_check, P_check, roll, pitch, v_gps, r_c_tc, q_ct):
+    def correction_step(self, x_check, mu_check, P_check, roll_mahony, pitch_mahony, v_gps, r_c_tc, q_ct):
         "Execute correction step of pose filter. Fuse measurements with predicted state"
         tic = time.time()
 
         # Stack state and measurement noises and draw sigma points
-        # R = self.R_mahony
-        # gps_avail = v_gps is not None
-        # apriltag_avail = r_c_tc is not None and q_ct is not None
-        # if gps_avail:
-        #     R = block_diag(R,self.R_gps)
-        # if apriltag_avail:
-        #     R = block_diag(R, self.R_tag)
-        L_R = self.L_tag # Start with just AprilTag
-        n_meas = L_R.shape[0]
+        gps_avail = v_gps is not None
+        apriltag_avail = r_c_tc is not None and q_ct is not None
+
+        n_meas = 2
+        L_R = self.L_mahony
+
+        if apriltag_avail:
+            n_meas += 6
+            L_R = block_diag(L_R, self.L_tag)
+        if gps_avail:
+            n_meas += 1
+            L_R = block_diag(L_R, self.L_gps)
 
         # Draw sigma points from stacked state and measurement noise
         dz_sig_k = self.generate_sigma_points(mu_check, P_check, L_R)
@@ -483,17 +516,44 @@ class RelativePoseFilter(object):
 
         C_check = quaternion_matrix(q_check)[0:3,0:3]
 
+        # Extract measurement noises
+        n_mahony = dz_sig_k[15:17,:]
+        n_apriltag = None
+        if apriltag_avail:
+            n_apriltag = dz_sig_k[17:23,:]
+
+        n_gps = None
+        if gps_avail:
+            if apriltag_avail:
+                n_gps = dz_sig_k[23:25,:]
+            else:
+                n_gps = dz_sig_k[17:19,:]
+
         # Pass sigma points through measurement model and calculate corresponding predicted measurements
         y_check = np.zeros((n_meas, n_z))
 
         for i in np.arange(n_z):
-            r_t_vt_i = r_check + dz_sig_k[0:3,i:i+1]
-            C_tv_i = np.dot(C_check, exponential_map(dz_sig_k[6:9,i]))
-            y_check[0:3,i:i+1] = -np.dot(self.C_vc.T, np.dot(C_tv_i.T, r_t_vt_i) + self.r_v_cv) + dz_sig_k[15:18, i:i+1]
+            q_tv_i = quaternion_multiply(q_check, quaternion_exp(dz_sig_k[6:9,i]))
+            roll_sig, pitch_sig, yaw_sig = euler_from_quaternion(q_tv_i)
+            y_check_i = np.array([[roll_sig + n_mahony[0,i]],
+                                  [pitch_sig + n_mahony[1,i]]])
 
-            delta_q_trans = quaternion_multiply(quaternion_multiply(q_check, quaternion_exp(dz_sig_k[6:9,i])), quaternion_conjugate(q_check))
-            delta_q_ct_i = quaternion_norm(quaternion_multiply(quaternion_conjugate(delta_q_trans), quaternion_exp(dz_sig_k[18:21,i])))
-            y_check[3:6,i:i+1] = quaternion_log(delta_q_ct_i).reshape((3,1))
+            if apriltag_avail:
+                r_t_vt_i = r_check + dz_sig_k[0:3,i:i+1]
+                C_tv_i = np.dot(C_check, exponential_map(dz_sig_k[6:9,i]))
+                r_c_tc_i = -np.dot(self.C_vc.T, np.dot(C_tv_i.T, r_t_vt_i) + self.r_v_cv) + n_apriltag[0:3, i:i+1]
+
+                delta_q_trans = quaternion_multiply(q_tv_i, quaternion_conjugate(q_check))
+                delta_q_ct_i = quaternion_norm(quaternion_multiply(quaternion_conjugate(delta_q_trans), quaternion_exp(n_apriltag[3:6,i])))
+                theta_ct_i = quaternion_log(delta_q_ct_i).reshape((3,1))
+
+                y_check_i = np.vstack((y_check_i, r_c_tc_i, theta_ct_i))
+
+            if gps_avail:
+                v_t_tv_i = v_check[0:2,0:1] + dz_sig_k[3:5,i:i+1] + n_gps[:,i:i+1]
+                y_check_i = np.vstack((y_check_i, np.linalg.norm(v_t_tv_i)))
+            
+            y_check[:,i:i+1] = y_check_i
 
         toc_propagate = time.time()
 
@@ -512,14 +572,20 @@ class RelativePoseFilter(object):
 
         toc_statistics = time.time()
 
-        # Calculate observed perturbations in AprilTag orientation measurement
-        delta_q_obs = quaternion_norm(quaternion_multiply(quaternion_multiply(q_check, self.q_vc), q_ct))
-        theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+        # Build measurement vector
+        y_obs = np.array([[roll_mahony],
+                          [pitch_mahony]])
+        if apriltag_avail:
+            # Calculate observed perturbations in AprilTag orientation measurement
+            delta_q_obs = quaternion_norm(quaternion_multiply(quaternion_multiply(q_check, self.q_vc), q_ct))
+            theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
+
+            y_obs = np.vstack((y_obs, r_c_tc, theta_obs))
+        if gps_avail:
+            y_obs = np.vstack((y_obs, v_gps))
 
         # Form Kalman Gain and execute correction step
-        # K_k = np.dot(sig_xy, np.linalg.inv(sig_yy))
         K_k = np.linalg.solve(sig_yy.T, sig_xy.T).T
-        y_obs = np.vstack((r_c_tc, theta_obs))
         
         P_hat = P_check - np.dot(K_k, sig_xy.T)
         delta_x_hat = mu_check + np.dot(K_k, y_obs - mu_y)
@@ -535,8 +601,8 @@ class RelativePoseFilter(object):
 
         toc_update = time.time()
 
-        rospy.loginfo('Correction Step. Cholesky = {:.2f} ms, propagation = {:.2f} ms, statistics = {:.2f} ms, update = {:.2f}'.format(
-            (toc_cholesky - tic) * 1000.0, (toc_propagate - toc_cholesky) * 1000.0, (toc_statistics - toc_propagate) * 1000.0, (toc_update - toc_statistics) * 1000.0))
+        rospy.loginfo('Correction Step. Cholesky = {:.2f} ms, propagation = {:.2f} ms, statistics = {:.2f} ms, update = {:.2f}, GPS:{}, AprilTag:{}'.format(
+            (toc_cholesky - tic) * 1000.0, (toc_propagate - toc_cholesky) * 1000.0, (toc_statistics - toc_propagate) * 1000.0, (toc_update - toc_statistics) * 1000.0, gps_avail, apriltag_avail))
         
         # Return corrected state and covariance
         return x_hat, P_hat

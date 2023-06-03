@@ -181,7 +181,7 @@ class RelativePoseEKF(object):
 
         imu_curr = self.IMU_msg
         mag_curr = self.magnetometer_msg
-        if self.measurement_ready and (self.upds_since_correction+1)>=self.upd_per_meas and self.filter_run_once:
+        if self.measurement_ready and (self.upds_since_correction + 1) >= self.upd_per_meas and self.filter_run_once:
             # Extract AprilTag reading, build tag pose matrix
             meas_curr = self.apriltag_msg
             self.measurement_ready = False

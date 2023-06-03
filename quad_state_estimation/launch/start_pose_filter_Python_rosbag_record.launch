@@ -1,7 +1,7 @@
 <launch>
     <node name = "rosbag_relative_pose_filter_debug_record" pkg="rosbag" type ="record"
     args="record -o /home/$(env USER)/Pose_Filter_Python /state_estimation/rel_pose_state /state_estimation/IMU_bias
-    /drone/ground_truth/imu /drone/imu /tag_detections /drone/rel_pose_ground_truth /drone/apriltag_ground_truth /drone/ground_truth/odometry
+    /drone/ground_truth/imu /drone/imu /tag_detections /drone/ground_speed /drone/rel_pose_ground_truth /drone/apriltag_ground_truth /drone/ground_truth/odometry
     /state_estimation/rel_pose_velocity /state_estimation/rel_pose_acceleration /state_estimation/upds_since_correction /state_estimation/rel_pose_reported
     /state_estimation/mahony_rel_pose /state_estimation/mahony_IMU_bias /state_estimation/mu_check_rel_pose /state_estimation/mu_check_rel_pose_velocity /state_estimation/pose_filter_timing" />
 </launch>

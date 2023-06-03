@@ -17,7 +17,7 @@ from relative_pose_filter import RelativePoseFilter
 from mahony_filter import MahonyFilter
 
 # Import message types
-from geometry_msgs.msg import PointStamped, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped, Vector3Stamped
+from geometry_msgs.msg import PointStamped, Vector3, Quaternion, PoseStamped,PoseWithCovarianceStamped, Vector3Stamped, TwistStamped
 from sensor_msgs.msg import Imu, CameraInfo
 from apriltag_ros.msg import AprilTagDetection, AprilTagDetectionArray
 from std_msgs.msg import Float64
@@ -27,12 +27,13 @@ class RelativePoseFilterNode(object):
     def __init__(self):
         
         # Rates:
-        self.update_freq = 100 # Hz
+        self.update_freq = 10 # Hz
         self.measurement_freq = 10 # Hz
+        self.update_freq_mahony = 100 # Hz
 
         # Objects:
         self.rel_pose_filter = RelativePoseFilter(self.update_freq, self.measurement_freq)
-        self.mahony_filter = MahonyFilter(self.update_freq)
+        self.mahony_filter = MahonyFilter(self.update_freq_mahony)
 
         self.camera_info_msg = CameraInfo()
         self.camera_info_lock = threading.Lock()
@@ -40,10 +41,12 @@ class RelativePoseFilterNode(object):
         # Subscribers:
         self.IMU_topic = '/drone/imu'
         self.magnetometer_topic = 'drone/fake_magnetometer'
+        self.gps_speed_topic = '/drone/ground_speed'
         self.apriltag_topic = '/tag_detections'
         self.camera_info_topic = '/drone/camera_sensor/camera_na/camera_info'
 
         self.IMU_sub = rospy.Subscriber(self.IMU_topic,Imu,callback=self.IMU_sub_callback)
+        self.gps_sub = rospy.Subscriber(self.gps_speed_topic,TwistStamped,callback=self.gps_sub_callback)
         self.apriltag_sub = rospy.Subscriber(self.apriltag_topic,AprilTagDetectionArray,callback=self.apriltag_sub_callback)
         self.camera_info_sub = rospy.Subscriber(self.camera_info_topic,CameraInfo,callback=self.camera_info_sub_callback)
 
@@ -78,6 +81,7 @@ class RelativePoseFilterNode(object):
 
         # Timers:
         self.update_timer = rospy.Timer(rospy.Duration(1.0 / self.update_freq), self.filter_update_callback)
+        self.mahony_update_timer = rospy.Timer(rospy.Duration(1.0 / self.update_freq_mahony), self.mahony_update_callback)
 
     def IMU_sub_callback(self,msg):
         self.rel_pose_filter.imu_lock.acquire()
@@ -87,6 +91,12 @@ class RelativePoseFilterNode(object):
         self.mahony_filter.imu_lock.acquire()
         self.mahony_filter.imu_msg = msg
         self.mahony_filter.imu_lock.release()
+
+    def gps_sub_callback(self,msg):
+        self.rel_pose_filter.gps_speed_lock.acquire()
+        self.rel_pose_filter.gps_speed_msg = msg
+        self.rel_pose_filter.gps_ready = True
+        self.rel_pose_filter.gps_speed_lock.release()
 
     def camera_info_sub_callback(self,msg):
         self.camera_info_lock.acquire()
@@ -98,7 +108,7 @@ class RelativePoseFilterNode(object):
             self.rel_pose_filter.apriltag_lock.acquire()
             self.rel_pose_filter.apriltag_msg = msg
 
-            self.rel_pose_filter.measurement_ready = True
+            self.rel_pose_filter.apriltag_ready = True
         
             if not self.rel_pose_filter.state_initialized:
                 self.rel_pose_filter.initialize_state(False)
@@ -106,8 +116,8 @@ class RelativePoseFilterNode(object):
             self.rel_pose_filter.apriltag_lock.release()
 
     def filter_update_callback(self,event):
-        # Execute filter updates
-        self.mahony_filter.filter_update()
+        # Execute filter update
+        self.rel_pose_filter.mahony_quaternion = self.mahony_filter.get_quaternion()
         self.rel_pose_filter.filter_update()
 
         # Publish state estimate
@@ -120,6 +130,12 @@ class RelativePoseFilterNode(object):
         self.IMU_bias_pub.publish(self.rel_pose_filter.IMU_bias_msg)
         self.pred_length_pub.publish(self.rel_pose_filter.pred_length_msg)
         self.timing_pub.publish(self.rel_pose_filter.timing_msg)
+
+    def mahony_update_callback(self,event):
+        # Execute filter update
+        self.mahony_filter.filter_update()
+
+        # Publish state estimate
         self.mahony_filter_pose_pub.publish(self.mahony_filter.pose_msg)
         self.mahony_filter_bias_pub.publish(self.mahony_filter.imu_bias_msg)
 
