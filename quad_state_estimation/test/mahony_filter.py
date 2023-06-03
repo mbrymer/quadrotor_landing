@@ -36,6 +36,9 @@ class MahonyFilter(object):
         self.pose_msg = PoseStamped()
         self.imu_bias_msg = Imu()
 
+        # Locks
+        self.lock = threading.Lock()
+
         # Parameters
         self.update_freq = update_freq
         self.dT = 1 / update_freq
@@ -71,6 +74,7 @@ class MahonyFilter(object):
             # Lazy way to skip bad inputs
             return
 
+        self.lock.acquire()
         C_hat = quaternion_matrix(self.q)[0:3,0:3]
         accel_hat_norm = -np.dot(C_hat.T, self.g_norm)
         accel_meas_norm = (accel_meas - self.imu_bias) / np.linalg.norm(accel_meas)
@@ -83,6 +87,7 @@ class MahonyFilter(object):
 
         self.q = quaternion_norm(quaternion_multiply(self.q, quaternion_exp(self.dT * omega_filter.flatten())))
         self.b = self.b - self.dT * self.ki * omega_meas
+        self.lock.release()
 
         # Update output message
         curr_time = rospy.get_rostime()
@@ -96,4 +101,10 @@ class MahonyFilter(object):
                                 angular_velocity = Vector3(x = self.b[0], y = self.b[1], z = self.b[2]))
         
         self.num_times_called += 1
+
+    def get_quaternion(self):
+        self.lock.acquire()
+        quaternion_copy = copy.copy(self.q)
+        self.lock.release()
+        return quaternion_copy
 
