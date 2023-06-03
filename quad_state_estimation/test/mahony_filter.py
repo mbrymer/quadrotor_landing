@@ -50,7 +50,7 @@ class MahonyFilter(object):
         # State
         self.q = identity_quaternion()
         # self.b = np.zeros((3,1))
-        self.b = np.array([[-0.002],[0.01],[0]])
+        self.b = np.array([[-0.002],[0.006],[0]])
         self.imu_bias = np.array([[-0.205],[-0.17],[0.065]])
 
         self.num_times_called = 0
@@ -81,9 +81,6 @@ class MahonyFilter(object):
         omega_meas = -vex_symm(1 / 2 * (np.dot(accel_meas_norm, accel_hat_norm.T) - np.dot(accel_hat_norm, accel_meas_norm.T)))
 
         omega_filter = w_meas - self.b + self.kp * omega_meas
-
-        if(self.num_times_called >= 1200):
-            potato = 5
 
         self.q = quaternion_norm(quaternion_multiply(self.q, quaternion_exp(self.dT * omega_filter.flatten())))
         self.b = self.b - self.dT * self.ki * omega_meas
