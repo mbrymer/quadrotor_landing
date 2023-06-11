@@ -6,7 +6,6 @@
 #
 
 from __future__ import division, print_function, absolute_import
-from cmath import pi
 
 # Import libraries
 import sys, copy, threading, math, time
@@ -83,8 +82,8 @@ class RelativePoseFilter(object):
         self.r_cov_init = 0.1
         self.v_cov_init = 0.1
         self.ang_cov_init = 0.15
-        self.ab_cov_init = 0.5
-        self.wb_cov_init = 0.1
+        self.ab_cov_init = 0.05
+        self.wb_cov_init = 0.05
 
         # self.Q_a = 0.00025*np.eye(3) # Hardware values
         # self.Q_w = 0.00045*np.eye(3) # 0.0005
@@ -171,6 +170,10 @@ class RelativePoseFilter(object):
         self.bias_hist_y = np.zeros(self.bias_window_size)
         self.bias_hist_z = np.zeros(self.bias_window_size)
 
+        # Outlier rejection
+        self.angle_rejection_tol = 3.0 * np.math.pi / 180 # rad
+        self.angular_rate_limit = 0.1 # rad/s . This is necessary because of uncompensated lag in the AprilTag detections in SPKF
+
         # Timing
         self.time_correction = 0.0
         self.time_filter_recalculate = 0.0
@@ -208,9 +211,9 @@ class RelativePoseFilter(object):
 
             self.gps_ready = False
 
-        use_apriltag = False
         r_c_tc = None
         q_ct = None
+        valid_detection = False
         if self.apriltag_ready and (self.upds_since_correction + 1) >= self.upd_per_meas and self.filter_run_once:
             # Extract AprilTag reading, build tag pose matrix
             self.apriltag_ready = False
@@ -221,31 +224,15 @@ class RelativePoseFilter(object):
                                 self.apriltag_msg.detections[0].pose.pose.pose.orientation.y,
                                 self.apriltag_msg.detections[0].pose.pose.pose.orientation.z,
                                 self.apriltag_msg.detections[0].pose.pose.pose.orientation.w])
-            T_ct = quaternion_matrix(q_ct)
-            T_ct[0:3,3:4] = r_c_tc
-            T_ct[3,3] = 1
-
-            # Check criteria for a "good" detection
-            # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
-            tag_corners_c = np.dot(T_ct,self.tag_corners)
-            tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
-            tag_corners_px = np.dot(self.camera_K,tag_corners_c_n[0:3,:])
-
-            min_px = np.min(tag_corners_px[0:2,:],axis=1)
-            max_px = np.max(tag_corners_px[0:2,:],axis=1)
-
-            use_apriltag = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
-                                min_px[1]>self.camera_height*self.tag_in_view_margin and
-                                max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
-                                max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
+            valid_detection = self.validate_detection(r_c_tc, q_ct, w_meas, self.mahony_quaternion)
 
         self.imu_lock.release()
         self.apriltag_lock.release()
-        self.gps_speed_lock.release() 
+        self.gps_speed_lock.release()
 
         # With multi-rate EKF need to perform correction first since it changes state we propagate from on this timestep
         # TODO: Bring GPS in here as well
-        if self.multirate_EKF and use_apriltag:
+        if self.multirate_EKF and valid_detection:
             # Extract state and covariance prediction at the time the measurement was recorded
             ind_meas = max(len(self.x_hist) - self.measurement_step_delay,0)
             x_check = self.x_hist[ind_meas]
@@ -308,10 +295,10 @@ class RelativePoseFilter(object):
             self.ab_nom = x_check[10:13,0:1]
             self.wb_nom = x_check[13:16,0:1]
             self.cov_pert = P_check
-        elif use_apriltag or (gps_speed_xy is not None):
+        elif valid_detection or (gps_speed_xy is not None):
             # Single state EKF, perform correction step and store corrected estimate
             roll_mahony, pitch_mahony, yaw_mahony = euler_from_quaternion(self.mahony_quaternion)
-            x_hat, P_hat = self.correction_step(x_check, mu_check, P_check, roll_mahony, pitch_mahony, gps_speed_xy, r_c_tc, q_ct)
+            x_hat, P_hat = self.correction_step(x_check, mu_check, P_check, roll_mahony, pitch_mahony, gps_speed_xy, r_c_tc, q_ct, valid_detection)
 
             self.time_correction = time.time() - tic
             tic = time.time()
@@ -332,7 +319,7 @@ class RelativePoseFilter(object):
             self.wb_nom = x_check[13:16, 0:1]
             self.cov_pert = P_check
 
-        if use_apriltag:
+        if valid_detection:
             self.upds_since_correction = 0
         else:
             self.upds_since_correction += 1
@@ -363,11 +350,9 @@ class RelativePoseFilter(object):
         self.timing_msg = PointStamped(header = curr_header, point = Point(x = self.time_prediction * 1.0E3, y = self.time_correction * 1.0E3, z = self.time_filter_recalculate * 1.0E3))
         self.tf_broadcast.sendTransform((tuple(self.r_nom)), (tuple(self.q_nom)), curr_time, self.pose_frame_name, self.pose_rel_frame_name)
 
-        if use_apriltag:
+        if r_c_tc is not None and q_ct is not None:
             # Report out observed vehicle position and orientation from AprilTag readings alone
-            q_tv_obs = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc, q_ct)))
-            C_tv_obs = quaternion_matrix(q_tv_obs)[0:3,0:3]
-            r_t_vt_obs = -np.linalg.multi_dot((C_tv_obs, self.C_vc, r_c_tc))-np.dot(C_tv_obs, self.r_v_cv)
+            r_t_vt_obs, q_tv_obs = self.detection_to_pose(r_c_tc, q_ct)
 
             self.rel_pose_report_msg = PoseStamped(header=curr_header,
             pose = Pose(position = Point(x = r_t_vt_obs[0], y = r_t_vt_obs[1], z = r_t_vt_obs[2]),
@@ -391,9 +376,7 @@ class RelativePoseFilter(object):
                                 self.apriltag_msg.detections[0].pose.pose.pose.orientation.z,
                                 self.apriltag_msg.detections[0].pose.pose.pose.orientation.w])
         
-        self.q_nom = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc,q_ct)))
-        C_tv_nom = quaternion_matrix(self.q_nom)[0:3,0:3]
-        self.r_nom = -np.dot(C_tv_nom,np.dot(self.C_vc,r_c_tc)+self.r_v_cv)
+        self.r_nom, self.q_nom = self.detection_to_pose(r_c_tc, q_ct)
         self.v_nom = np.zeros((3,1))
 
         if reinit_bias:
@@ -410,6 +393,14 @@ class RelativePoseFilter(object):
         self.state_initialized = True
         self.filter_run_once = False
         self.state_lock.release()
+
+    def detection_to_pose(self, r_c_tc, q_ct):
+        "Convert AprilTag detection to implied vehicle pose"
+        q_tv = quaternion_norm(quaternion_conjugate(quaternion_multiply(self.q_vc, q_ct)))
+        C_tv = quaternion_matrix(q_tv)[0:3,0:3]
+        r_t_vt = -np.dot(C_tv, np.dot(self.C_vc, r_c_tc) + self.r_v_cv)
+
+        return r_t_vt, q_tv
 
     def prediction_step(self, x_km1, u, P_km1):
         "Execute prediction step of pose filter. Propagate state forward based on IMU measurements"
@@ -482,18 +473,17 @@ class RelativePoseFilter(object):
         # Return propagated nominal state, perturbation state and relative acceleration (debugging)
         return x_check, mu_check, P_check, accel_rel
 
-    def correction_step(self, x_check, mu_check, P_check, roll_mahony, pitch_mahony, v_gps, r_c_tc, q_ct):
+    def correction_step(self, x_check, mu_check, P_check, roll_mahony, pitch_mahony, v_gps, r_c_tc, q_ct, valid_detection):
         "Execute correction step of pose filter. Fuse measurements with predicted state"
         tic = time.time()
 
         # Stack state and measurement noises and draw sigma points
         gps_avail = v_gps is not None
-        apriltag_avail = r_c_tc is not None and q_ct is not None
 
         n_meas = 2
         L_R = self.L_mahony
 
-        if apriltag_avail:
+        if valid_detection:
             n_meas += 6
             L_R = block_diag(L_R, self.L_tag)
         if gps_avail:
@@ -519,12 +509,12 @@ class RelativePoseFilter(object):
         # Extract measurement noises
         n_mahony = dz_sig_k[15:17,:]
         n_apriltag = None
-        if apriltag_avail:
+        if valid_detection:
             n_apriltag = dz_sig_k[17:23,:]
 
         n_gps = None
         if gps_avail:
-            if apriltag_avail:
+            if valid_detection:
                 n_gps = dz_sig_k[23:25,:]
             else:
                 n_gps = dz_sig_k[17:19,:]
@@ -538,7 +528,7 @@ class RelativePoseFilter(object):
             y_check_i = np.array([[roll_sig + n_mahony[0,i]],
                                   [pitch_sig + n_mahony[1,i]]])
 
-            if apriltag_avail:
+            if valid_detection:
                 r_t_vt_i = r_check + dz_sig_k[0:3,i:i+1]
                 C_tv_i = np.dot(C_check, exponential_map(dz_sig_k[6:9,i]))
                 r_c_tc_i = -np.dot(self.C_vc.T, np.dot(C_tv_i.T, r_t_vt_i) + self.r_v_cv) + n_apriltag[0:3, i:i+1]
@@ -575,7 +565,7 @@ class RelativePoseFilter(object):
         # Build measurement vector
         y_obs = np.array([[roll_mahony],
                           [pitch_mahony]])
-        if apriltag_avail:
+        if valid_detection:
             # Calculate observed perturbations in AprilTag orientation measurement
             delta_q_obs = quaternion_norm(quaternion_multiply(quaternion_multiply(q_check, self.q_vc), q_ct))
             theta_obs = quaternion_log(delta_q_obs).reshape((3,1))
@@ -602,7 +592,7 @@ class RelativePoseFilter(object):
         toc_update = time.time()
 
         rospy.loginfo('Correction Step. Cholesky = {:.2f} ms, propagation = {:.2f} ms, statistics = {:.2f} ms, update = {:.2f}, GPS:{}, AprilTag:{}'.format(
-            (toc_cholesky - tic) * 1000.0, (toc_propagate - toc_cholesky) * 1000.0, (toc_statistics - toc_propagate) * 1000.0, (toc_update - toc_statistics) * 1000.0, gps_avail, apriltag_avail))
+            (toc_cholesky - tic) * 1000.0, (toc_propagate - toc_cholesky) * 1000.0, (toc_statistics - toc_propagate) * 1000.0, (toc_update - toc_statistics) * 1000.0, gps_avail, valid_detection))
         
         # Return corrected state and covariance
         return x_hat, P_hat
@@ -614,3 +604,40 @@ class RelativePoseFilter(object):
         L = L_z.shape[0]
         sigma_points = np.vstack((mu, np.zeros((L_Q.shape[0],1)))) + np.hstack((np.zeros((L, 1)), math.sqrt(L + self.kappa) * L_z, -math.sqrt(L + self.kappa) * L_z))
         return sigma_points
+    
+    def validate_detection(self, r_c_tc, q_ct, w_meas, q_mahony):
+        "Perform outlier rejection on AprilTag detections"
+
+        # If no detection it cannot be valid
+        if r_c_tc is None or q_ct is None:
+            return False
+        
+        # Project tag corners into image, verify they have some margin to the edge of the image to guard against spurious detections
+        T_ct = quaternion_matrix(q_ct)
+        T_ct[0:3,3:4] = r_c_tc
+        T_ct[3,3] = 1
+
+        tag_corners_c = np.dot(T_ct, self.tag_corners)
+        tag_corners_c_n = tag_corners_c / tag_corners_c[2,:]
+        tag_corners_px = np.dot(self.camera_K, tag_corners_c_n[0:3,:])
+
+        min_px = np.min(tag_corners_px[0:2,:],axis=1)
+        max_px = np.max(tag_corners_px[0:2,:],axis=1)
+
+        corners_in_image = (min_px[0]>self.camera_width*self.tag_in_view_margin and 
+                            min_px[1]>self.camera_height*self.tag_in_view_margin and
+                            max_px[0]<self.camera_width*(1-self.tag_in_view_margin) and 
+                            max_px[1]<self.camera_height*(1-self.tag_in_view_margin))
+        
+        # Check if reported pose is implausible by crosschecking against Mahony filter attitude
+        r_t_vt_reported, q_tv_reported = self.detection_to_pose(r_c_tc, q_ct)
+
+        roll_reported, pitch_reported, yaw_reported = euler_from_quaternion(q_tv_reported)
+        roll_mahony, pitch_mahony, yaw_mahony = euler_from_quaternion(q_mahony)
+
+        roll_implausible = np.abs(roll_reported - roll_mahony) > self.angle_rejection_tol and np.abs(w_meas[0]) < self.angular_rate_limit
+        pitch_implausible = np.abs(pitch_reported - pitch_mahony) > self.angle_rejection_tol and np.abs(w_meas[1]) < self.angular_rate_limit
+
+        detection_valid = corners_in_image and not(roll_implausible or pitch_implausible)
+        
+        return detection_valid

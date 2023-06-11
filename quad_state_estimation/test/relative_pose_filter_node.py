@@ -122,7 +122,6 @@ class RelativePoseFilterNode(object):
 
         # Publish state estimate
         self.rel_pose_pub.publish(self.rel_pose_filter.rel_pose_msg)
-        self.rel_pose_report_pub.publish(self.rel_pose_filter.rel_pose_report_msg)
         self.rel_vel_pub.publish(self.rel_pose_filter.rel_vel_msg)
         self.rel_accel_pub.publish(self.rel_pose_filter.rel_accel_msg)
         self.mu_check_pose_pub.publish(self.rel_pose_filter.mu_check_pose_msg)
@@ -130,6 +129,11 @@ class RelativePoseFilterNode(object):
         self.IMU_bias_pub.publish(self.rel_pose_filter.IMU_bias_msg)
         self.pred_length_pub.publish(self.rel_pose_filter.pred_length_msg)
         self.timing_pub.publish(self.rel_pose_filter.timing_msg)
+
+        # Publish newly reported relative pose from AprilTag detector
+        if self.rel_pose_filter.rel_pose_report_msg is not None:
+            self.rel_pose_report_pub.publish(self.rel_pose_filter.rel_pose_report_msg)
+            self.rel_pose_filter.rel_pose_report_msg = None
 
     def mahony_update_callback(self,event):
         # Execute filter update
