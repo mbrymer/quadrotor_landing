@@ -87,6 +87,7 @@ def exponential_map(vector):
         return np.eye(3) + skew_symm(vector)
     else:
         # Full exponential map
+        vector_norm = vector / norm
         return (np.math.cos(norm) * np.eye(3) +
-        (1 - np.math.cos(norm)) * np.dot(vector.reshape((3,1)), vector.reshape((1,3))) +
-        np.math.sin(norm) * skew_symm(vector))
+        (1 - np.math.cos(norm)) * np.dot(vector_norm.reshape((3,1)), vector_norm.reshape((1,3))) +
+        np.math.sin(norm) * skew_symm(vector_norm))
