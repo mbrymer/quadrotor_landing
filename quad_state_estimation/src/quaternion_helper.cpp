@@ -3,7 +3,7 @@
     Quaternion Helper Functions
 */
 
-#include <quaternion_helper.hpp>
+#include <quaternion_helper.h>
 
 // Quaternion exponential map from pure to unit quaternion
 Eigen::Quaterniond quaternion_exp(Eigen::VectorXd pure_quat)

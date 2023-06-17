@@ -13,7 +13,7 @@
 #include <math.h>
 #include <algorithm>
 #include <vector>
-#include <quaternion_helper.hpp>
+#include <quaternion_helper.h>
 
 using Eigen::seq;
 
