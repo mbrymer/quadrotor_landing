@@ -26,3 +26,9 @@ Eigen::VectorXd quat_to_vec(Eigen::Quaterniond quaternion);
 
 // Return the quaternion corresponding to a 4x1 vector
 Eigen::Quaterniond vec_to_quat(Eigen::VectorXd vec);
+
+// Return the vex operator of a skew symmetric matrix
+Eigen::Vector3d VexSymm(const Eigen::Matrix3d& skew_symm);
+
+// Return the rotation matrix corresponding to a Lie algebra vector
+Eigen::Matrix3d exponential_map(const Eigen::Vector3d& lie_vector)

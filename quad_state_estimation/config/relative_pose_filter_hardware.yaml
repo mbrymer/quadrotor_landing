@@ -1,0 +1,67 @@
+# Relative Pose Filter Parameters
+# Rates
+update_freq: 100.0 # Hz
+measurement_freq: 100.0 # Hz
+measurement_delay: 0.150 # s
+measurement_delay_max: 0.350 # s
+dyn_measurement_delay_offset: 0.085 # s
+
+# Topics
+IMU_topic: "/mavros/imu/data_raw"
+
+# Noise Values
+Q_a_diag: [0.00025,0.00025,0.00025] # Allan deviation for IMU noise with no motors running
+Q_w_diag: [0.00045,0.00045,0.00045]
+Q_ab_diag: [7.0E-6,7.0E-6,7.0E-6]
+Q_wb_diag: [4.4E-5,4.4E-5,4.4E-5]
+
+R_r_diag: [0.0015,0.0015,0.006] # Small tag at ~1.5 m
+R_ang_diag: [0.0015,0.0015,0.04] #
+
+accel_bias_static: [0.20,-0.09,-0.03]
+gyro_bias_static: [-0.02,-0.01,0.0]
+
+# Camera Parameters
+# Intrinsics ref: camera_calibration_2022-07-22-11-23-46_640x480_mono-camchain.yaml
+camera_K: [437.3412312213781,0,328.5442810236917,0,438.0867474272743,239.2536470406629,0,0,1]
+camera_width: 640.0
+camera_height: 480.0
+
+# Extrinsics ref:IMU_camera_cal_2022-07-16-22-48-49_640x480_clip-camchain-imucam.yaml
+r_v_cv: [0.06036412,-0.00145196,-0.04439579]
+q_vc: [-0.7035177, 0.7106742, 0.0014521, -0.0017207]
+
+# Mahony Filter
+kp: 0.1
+ki: 0.05
+mahony_accel_bias_init: [0.20,-0.09,-0.03]
+mahony_gyro_bias_init: [-0.02,-0.01,0.0]
+
+# Target Configuration
+n_tags: 13
+tag_in_view_margin: 0.00
+
+tag_widths: [0.08382,0.16764,0.16764,0.16764,0.16764,
+            0.33528,0.33528,0.33528,0.33528,
+            0.16764,0.16764,0.16764,0.16764] # 20% margin on tag dimension to leave white border
+tag_positions: [0,0,0,
+                0,0.1571625,0,
+                0.1571625,0,0,
+                0,-0.1571625,0,
+                -0.1571625,0,0,
+                -0.244475, 0.244475,0,
+                0.244475, 0.244475,0,
+                0.244475, -0.244475,0,
+                -0.244475, -0.244475,0,
+                0,0.314325,0,
+                0.314325,0,0,
+                0,-0.314325,0,
+                -0.314325,0,0]
+
+# Flags/Options
+limit_measurement_freq: False
+corner_margin_enbl: True
+est_bias: True
+direct_orien_method: True
+multirate_ekf: True
+dynamic_meas_delay: True
