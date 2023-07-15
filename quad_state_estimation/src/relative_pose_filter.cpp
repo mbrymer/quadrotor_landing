@@ -7,13 +7,12 @@
 
 #include <relative_pose_utils.h>
 #include <relative_pose_filter_settings.h>
+#include <apriltag_detection.h>
 
 RelativePoseFilter::RelativePoseFilter() : mahony_filter_{kDefaultDt, kMahonyDefaultKp, kMahonyDefaultKi} {
     // Default values for parameters
     IMU_accel_ = Eigen::VectorXd::Zero(3);
     IMU_ang_vel_ = Eigen::VectorXd::Zero(3);
-    apriltag_pos_ = Eigen::VectorXd::Zero(3);
-    apriltag_orien_ = Eigen::Quaterniond(1,0,0,0);
 
     // State
     r_nom_ = Eigen::VectorXd::Zero(3);
@@ -24,17 +23,15 @@ RelativePoseFilter::RelativePoseFilter() : mahony_filter_{kDefaultDt, kMahonyDef
     wb_nom_ = Eigen::VectorXd::Zero(3);
     ab_static_ = Eigen::VectorXd::Zero(3);
     wb_static_ = Eigen::VectorXd::Zero(3);
-    r_t_vt_obs_ = Eigen::VectorXd::Zero(3);
-    q_tv_obs_ = Eigen::Quaterniond::Identity();
 
     // Filter Parameters
     update_freq_ = kDefaultLoopRate;
-    measurement_freq_ = 10;
+    apriltag_freq_ = 10;
     measurement_delay_ = 0.010;
     measurement_delay_max_ = 0.200;
     t_last_update_ = 0;
     est_bias_ = true;
-    limit_measurement_freq_ = false;
+    limit_apriltag_freq_ = false;
     corner_margin_enbl_ = true;
     direct_orien_method_ = false;
     multirate_filter_ = false;
@@ -42,10 +39,10 @@ RelativePoseFilter::RelativePoseFilter() : mahony_filter_{kDefaultDt, kMahonyDef
     measurement_delay_curr_ = 0.0;
 
     // Process and Measurement Noises
-    Q_a_ = 0.005*Eigen::VectorXd::Ones(3);
-    Q_w_ = 0.0005*Eigen::VectorXd::Ones(3);
-    Q_ab_ = 5E-5*Eigen::VectorXd::Ones(3);
-    Q_wb_ = 5E-6*Eigen::VectorXd::Ones(3);
+    Q_a_ = 0.005 * Eigen::VectorXd::Ones(3);
+    Q_w_ = 0.0005 * Eigen::VectorXd::Ones(3);
+    Q_ab_ = 5E-5 * Eigen::VectorXd::Ones(3);
+    Q_wb_ = 5E-6 * Eigen::VectorXd::Ones(3);
 
     R_r_ = Eigen::VectorXd::Zero(3);
     R_ang_ = Eigen::VectorXd::Zero(3);
@@ -73,13 +70,12 @@ RelativePoseFilter::RelativePoseFilter() : mahony_filter_{kDefaultDt, kMahonyDef
 
     // Counters/flags
     state_initialized_ = false;
-    measurement_ready_ = false;
-    performed_correction_ = false;
+    performed_apriltag_correction_ = false;
     filter_active_ = false;
-    upds_since_correction_ = 0;
+    upds_since_apriltag_correction_ = 0;
 
     // Tolerances and constants
-    g_ << 0,0,-kGravitationalConstant;
+    g_ << 0, 0, -kGravitationalConstant;
 
     InitializeParams();
 }
@@ -88,7 +84,7 @@ void RelativePoseFilter::InitializeParams()
 {
     // Filter parameters
     dT_nom_ = 1 / update_freq_;
-    upd_per_meas_ = int(ceil(update_freq_ / measurement_freq_));
+    upd_per_apriltag_meas_ = int(ceil(update_freq_ / apriltag_freq_));
     num_states_ = est_bias_ ? 15 : 9;
     measurement_step_delay_ = std::max(int(measurement_delay_ / dT_nom_ + 0.5), 1);
 
@@ -97,7 +93,7 @@ void RelativePoseFilter::InitializeParams()
     Eigen::VectorXd cov_init_stack(num_states_);
     if (est_bias_)
     {
-        Q_stack = Eigen::VectorXd::Zero(Q_a_.size()+Q_w_.size()+Q_ab_.size()+Q_wb_.size());
+        Q_stack = Eigen::VectorXd::Zero(Q_a_.size() + Q_w_.size() + Q_ab_.size() + Q_wb_.size());
         Q_stack << Q_a_, Q_w_, Q_ab_, Q_wb_;
         cov_init_stack << r_cov_init_ * Eigen::VectorXd::Ones(3), v_cov_init_ * Eigen::VectorXd::Ones(3),
         ang_cov_init_ * Eigen::VectorXd::Ones(3), ab_cov_init_ * Eigen::VectorXd::Ones(3), wb_cov_init_ * Eigen::VectorXd::Ones(3);
@@ -133,35 +129,29 @@ void RelativePoseFilter::Update(double t_curr)
 {
     // std::cout << "Starting filter update" << std::endl;
 
-    // Clamp data, decide if should do correction
+    // Clamp data.
     mtx_IMU_.lock();
     mtx_apriltag_.lock();
+    mtx_gps_speed_.lock();
 
     Eigen::Vector3d IMU_accel_curr = IMU_accel_;
     Eigen::Vector3d IMU_ang_vel_curr = IMU_ang_vel_;
 
-    Eigen::Vector3d r_c_tc;
-    Eigen::Quaterniond q_ct;
-    Eigen::Affine3d T_ct;
+    std::optional<AprilTagDetection> apriltag_detection_curr;
+    std::optional<double> gps_speed_curr = gps_speed_;
 
-    bool perform_correction = false;
-
-    if (measurement_ready_ && (!limit_measurement_freq_ || (upds_since_correction_+1) >= upd_per_meas_))
+    if (apriltag_detection_.has_value() && (!limit_apriltag_freq_ || (upds_since_apriltag_correction_ + 1) >= upd_per_apriltag_meas_))
     {
-        // Perform measurement update. Extract AprilTag reading and build pose matrix
-        r_c_tc = apriltag_pos_;
-        q_ct = apriltag_orien_;
-        measurement_ready_ = false;
+        // AprilTag reading available. Extract and build pose matrix
+        std::tie(r_t_vt_obs_, q_tv_obs_) = DetectionToPose(apriltag_detection_.value());
+        const auto T_ct = Eigen::Translation3d(apriltag_detection_->position) * apriltag_detection_->orientation;
 
-        std::tie(r_t_vt_obs_, q_tv_obs_) = DetectionToPose(apriltag_pos_, apriltag_orien_);
-
-        T_ct = Eigen::Translation3d(r_c_tc) * q_ct;
-
+        bool tag_corner_in_view = false;
         if (corner_margin_enbl_)
         {
             // Check criteria for a "good" detection
             // Project tag corners to pixel coordinates, verify that at least one in the bundle has some margin to the edge of the image
-            for (int i=0;i<n_tags_; ++i)
+            for (int i = 0; i < n_tags_; ++i)
             {
                 Eigen::Matrix4d tag_corners_curr;
                 tag_corners_curr << tag_widths_(i)/2+tag_positions_(0,i), -tag_widths_(i)/2+tag_positions_(0,i), -tag_widths_(i)/2+tag_positions_(0,i), tag_widths_(i)/2+tag_positions_(0,i),
@@ -176,23 +166,22 @@ void RelativePoseFilter::Update(double t_curr)
                 Eigen::VectorXd min_px = tag_corners_px.rowwise().minCoeff();
                 Eigen::VectorXd max_px = tag_corners_px.rowwise().maxCoeff();
 
-                perform_correction = (min_px(0)>camera_width_*tag_in_view_margin_ &&
+                tag_corner_in_view = (min_px(0)>camera_width_*tag_in_view_margin_ &&
                                     min_px(1)>camera_height_*tag_in_view_margin_ &&
                                     max_px(0)<camera_width_*(1-tag_in_view_margin_) &&
                                     max_px(1)<camera_height_*(1-tag_in_view_margin_));
-                if (perform_correction)
-                    break;
+                if (tag_corner_in_view) break;
             }
         }
-        else
-        {
-            perform_correction = true;
+        
+        if (tag_corner_in_view || !corner_margin_enbl_) {
+            apriltag_detection_curr = apriltag_detection_;
         }
-
-        // std::cout << "Perform correction: " << std::to_string(perform_correction) << std::endl;
-
+        apriltag_detection_.reset();
     }
+    gps_speed_.reset();
 
+    mtx_gps_speed_.unlock();
     mtx_apriltag_.unlock();
     mtx_IMU_.unlock();
 
@@ -201,128 +190,45 @@ void RelativePoseFilter::Update(double t_curr)
 
     if (!state_initialized_) return;
 
-    // With multirate EKF need to perform correction first since it changes state for prediction step
-    if (multirate_filter_ && perform_correction)
-    {
-        // Extract state and covariance prediction at the time the measurement was taken
-        measurement_delay_curr_ = dynamic_meas_delay_ ?
-        std::min(t_curr - apriltag_time_ + dyn_measurement_delay_offset_, measurement_delay_max_)
-        : measurement_delay_;
-        int step_delay_curr = std::max(int(measurement_delay_curr_/dT_nom_ + 0.5),1);
-        int ind_meas = std::max(int(x_hist_.size())-step_delay_curr,0);
-        Eigen::VectorXd x_check = x_hist_[ind_meas];
-        Eigen::MatrixXd P_check = P_hist_[ind_meas];
-
-        Eigen::VectorXd x_hat;
-        Eigen::MatrixXd P_hat;
-
-        // Execute correction step, store at time measurement was recorded
-        CorrectionStep(x_check,P_check,r_c_tc,q_ct,x_hat,P_hat);
-        x_hist_[ind_meas] = x_hat;
-        P_hist_[ind_meas] = P_hat;
-
-        // Remove history before measurement
-        if (ind_meas>0)
-        {
-            x_hist_.erase(x_hist_.begin(),x_hist_.begin()+ind_meas);
-            u_hist_.erase(u_hist_.begin(),u_hist_.begin()+ind_meas);
-            P_hist_.erase(P_hist_.begin(),P_hist_.begin()+ind_meas);
-        }
-
-        // Update state history by propagating forward based on past IMU measurements
-        for (int i = 1; i<x_hist_.size() ; ++i)
-        {
-            Eigen::Vector3d foo;
-            PredictionStep(x_hist_[i-1], P_hist_[i-1], u_hist_[i], x_hist_[i], P_hist_[i], foo);
-        }
-
-        // Sync latest estimate to state history
-        r_nom_ = x_hist_.back()(seq(0,2));
-        v_nom_ = x_hist_.back()(seq(3,5));
-        q_nom_ = vec_to_quat(x_hist_.back()(seq(6,9)));
-        ab_nom_ = x_hist_.back()(seq(10,12));
-        wb_nom_ = x_hist_.back()(seq(13,15));
-
-        cov_pert_ = P_hist_.back();        
-    }
-
     // Prediction step
-    // Append the current measurement for this timestep
     Eigen::VectorXd IMU_curr(6);
-    IMU_curr << IMU_accel_curr, IMU_ang_vel_curr;
-
-    // Execute prediction
     Eigen::VectorXd x_km1(StateIndex::NumStates);
+
+    IMU_curr << IMU_accel_curr, IMU_ang_vel_curr;
     x_km1 << r_nom_, v_nom_, quat_to_vec(q_nom_), ab_nom_, wb_nom_;
 
     Eigen::VectorXd x_check;
     Eigen::VectorXd mu_check;
     Eigen::MatrixXd P_check;
-    std::tie(x_check, P_check, mu_check, accel_rel_) = PredictionStep(x_km1, cov_pert_, IMU_curr);
+    std::tie(x_check, mu_check, P_check, accel_rel_) = PredictionStep(x_km1, cov_pert_, IMU_curr);
 
-    if (multirate_filter_)
-    {
-        // Append prediction to state history, store in latest state
-        x_hist_.push_back(x_check);
-        u_hist_.push_back(IMU_curr);
-        P_hist_.push_back(P_check);
+    // Single state KF, perform correction step and store result
+    Eigen::Vector3d euler_angles = mahony_filter_.GetAttitude().toRotationMatrix().eulerAngles(2, 1, 0).reverse();
+    const auto [x_hat, P_hat] = CorrectionStep(x_check, mu_check, P_check, euler_angles(MahonyMeasurementIndex::roll),
+                                euler_angles(MahonyMeasurementIndex::pitch), gps_speed_curr, apriltag_detection_curr);
 
-        r_nom_ = x_check(seq(0,2));
-        v_nom_ = x_check(seq(3,5));
-        q_nom_ = vec_to_quat(x_check(seq(6,9)));
-        ab_nom_ = x_check(seq(10,12));
-        wb_nom_ = x_check(seq(13,15));
-        cov_pert_ = P_check;
-    }
-    else if (perform_correction)
-    {
-        // Single state EKF, perform correction step and store result
-        Eigen::VectorXd x_hat;
-        Eigen::MatrixXd P_hat;
+    r_nom_ = x_hat(seq(StateIndex::X, StateIndex::Z));
+    v_nom_ = x_hat(seq(StateIndex::Vx, StateIndex::Vz));
+    q_nom_ = vec_to_quat(x_hat(seq(StateIndex::q_x, StateIndex::q_w)));
+    ab_nom_ = x_hat(seq(StateIndex::ab_x, StateIndex::ab_z));
+    wb_nom_ = x_hat(seq(StateIndex::wb_x, StateIndex::wb_z));
+    cov_pert_ = P_hat;
 
-        CorrectionStep(x_check,P_check,r_c_tc,q_ct,x_hat,P_hat);
-
-        r_nom_ = x_hat(seq(0,2));
-        v_nom_ = x_hat(seq(3,5));
-        q_nom_ = vec_to_quat(x_hat(seq(6,9)));
-        ab_nom_ = x_hat(seq(10,12));
-        wb_nom_ = x_hat(seq(13,15));
-        cov_pert_ = P_hat;
-    }
-    else
-    {
-        // Single state EKF, prediction only
-        // Just store latest prediction
-        r_nom_ = x_check(seq(0,2));
-        v_nom_ = x_check(seq(3,5));
-        q_nom_ = vec_to_quat(x_check(seq(6,9)));
-        ab_nom_ = x_check(seq(10,12));
-        wb_nom_ = x_check(seq(13,15));
-        cov_pert_ = P_check;
-    }
-
-    if (perform_correction)
-    {
-        upds_since_correction_ = 0;
-    }
-    else
-    {
-        upds_since_correction_ += 1;
-    }
-
-    performed_correction_ = perform_correction;
+    performed_apriltag_correction_ = apriltag_detection_curr.has_value();
+    upds_since_apriltag_correction_ = apriltag_detection_curr.has_value() ? 0 : upds_since_apriltag_correction_ + 1;
     filter_active_ = true;
 }
 
 void RelativePoseFilter::InitializeState(bool reinit_bias) {
+    if (!apriltag_detection_.has_value()) {
+        std::cout << "Attempted to initialize state with no AprilTag detection!" << std::endl;
+        return;
+    }
+
     mtx_state_.lock();
 
     // Initialize relative pose from last AprilTag detection
-    q_nom_ = (q_vc_ * apriltag_orien_).conjugate();
-    quaternion_norm(q_nom_);
-    r_nom_ = -(q_nom_ * T_vc_ * apriltag_pos_.homogeneous());
-
-    std::tie(r_nom_, q_nom_) = DetectionToPose(apriltag_pos_, apriltag_orien_);
+    std::tie(r_nom_, q_nom_) = DetectionToPose(apriltag_detection_.value());
 
     v_nom_ = Eigen::VectorXd::Zero(3);
 
@@ -335,15 +241,15 @@ void RelativePoseFilter::InitializeState(bool reinit_bias) {
     cov_pert_ = cov_init_;
 
     // Initialize state history with a single value
-    Eigen::VectorXd x_stack = Eigen::VectorXd::Zero(r_nom_.size()+v_nom_.size()+4+ab_nom_.size()+wb_nom_.size());
-    x_stack(seq(0,2)) = r_nom_;
-    x_stack(seq(3,5)) = v_nom_;
-    x_stack(seq(6,9)) = Eigen::Vector4d(q_nom_.x(),q_nom_.y(),q_nom_.z(),q_nom_.w());
+    Eigen::VectorXd x_stack = Eigen::VectorXd::Zero(StateIndex::NumStates);
+    x_stack(seq(StateIndex::X, StateIndex::Z)) = r_nom_;
+    x_stack(seq(StateIndex::Vx, StateIndex::Vz)) = v_nom_;
+    x_stack(seq(StateIndex::q_x, StateIndex::q_w)) = Eigen::Vector4d(q_nom_.x(),q_nom_.y(),q_nom_.z(),q_nom_.w());
 
     if (est_bias_)
     {
-        x_stack(seq(10,12)) = ab_nom_;
-        x_stack(seq(13,15)) = wb_nom_;
+        x_stack(seq(StateIndex::ab_x, StateIndex::ab_z)) = ab_nom_;
+        x_stack(seq(StateIndex::wb_x, StateIndex::wb_z)) = wb_nom_;
     }
 
     x_hist_ = std::vector<Eigen::VectorXd>{x_stack};
@@ -352,14 +258,12 @@ void RelativePoseFilter::InitializeState(bool reinit_bias) {
 
     state_initialized_ = true;
     mtx_state_.unlock();
-
 }
 
-std::tuple<Eigen::Vector3d, Eigen::Quaterniond> RelativePoseFilter::DetectionToPose(
-    const Eigen::Vector3d& apriltag_pos, const Eigen::Quaterniond& apriltag_orien){
-    Eigen::Quaterniond q_nom = (q_vc_ * apriltag_orien).conjugate();
+std::tuple<Eigen::Vector3d, Eigen::Quaterniond> RelativePoseFilter::DetectionToPose(const AprilTagDetection& apriltag_detection){
+    Eigen::Quaterniond q_nom = (q_vc_ * apriltag_detection.orientation).conjugate();
     quaternion_norm(q_nom);
-    Eigen::Vector3d r_nom = -(q_nom * T_vc_ * apriltag_pos.homogeneous());
+    Eigen::Vector3d r_nom = -(q_nom * T_vc_ * apriltag_detection.position.homogeneous());
     return {r_nom, q_nom};
 }
 
@@ -445,8 +349,7 @@ Eigen::MatrixXd, Eigen::Vector3d> RelativePoseFilter::PredictionStep(const Eigen
 
 std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(const Eigen::VectorXd& x_check, const Eigen::VectorXd& mu_check,
                                                             const Eigen::MatrixXd& P_check, double roll_mahony, double pitch_mahony,
-                                                            std::optional<double> v_gps, const std::optional<Eigen::VectorXd>& r_c_tc,
-                                                            const std::optional<Eigen::Quaterniond>& q_ct, bool valid_detection){
+                                                            std::optional<double> v_gps, const std::optional<AprilTagDetection>& apriltag_detection){
     // Fuse motion model prediction with measurements
     // Unpack state
     Eigen::VectorXd r_check = x_check(seq(StateIndex::X, StateIndex::Z));
@@ -457,7 +360,7 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
 
     // Build measurement covariance based on available measurements
     // Mahony is always available
-    bool apriltag_avail = r_c_tc.has_value() && q_ct.has_value() && valid_detection;
+    bool apriltag_avail = apriltag_detection.has_value();
     int n_measurements = MahonyMeasurementIndex::NumAngles + apriltag_avail * NumAprilTagIndices + v_gps.has_value();
     int n_measurement_noise = MahonyMeasurementIndex::NumAngles +
                               apriltag_avail * NumAprilTagIndices +
@@ -465,7 +368,7 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
 
     Eigen::MatrixXd measurement_noise_L = Eigen::MatrixXd::Zero(n_measurement_noise, n_measurement_noise);
     measurement_noise_L(seq(0,1), seq(0,1)) = L_R_mahony_;
-    int ind_measurement_noise = 2;
+    int ind_measurement_noise = MahonyMeasurementIndex::NumAngles;
 
     if (apriltag_avail) {
         measurement_noise_L(seq(ind_measurement_noise, ind_measurement_noise + NumAprilTagIndices - 1),
@@ -477,7 +380,7 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
         seq(ind_measurement_noise, ind_measurement_noise + NumGPSSpeedNoise - 1)) = L_R_gps_;
     }
 
-    // Draw sigma points from stacked 
+    // Draw sigma points from stacked state and measurement noise vector
     Eigen::MatrixXd dz_sigma_points_k = DrawSigmaPoints(mu_check, P_check, measurement_noise_L, kSigmaPointKappa);
     const double L = dz_sigma_points_k.rows();
     const double n_z = dz_sigma_points_k.cols();
@@ -502,15 +405,16 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
     // Pass sigma points through the measurement model to build our predicted measurements
     Eigen::MatrixXd y_check = Eigen::MatrixXd::Zero(n_measurements, n_z);
 
-    for (int i = 0; i < dz_sigma_points_k.cols(); ++i) {
+    for (int i = 0; i < n_z; ++i) {
         Eigen::Quaterniond delta_q_tv_i = quaternion_exp(dz_sigma_points_k(seq(theta_x, theta_z), i));
         Eigen::Quaterniond q_tv_i = q_check * delta_q_tv_i;
         Eigen::Matrix3d C_tv_i = q_tv_i.toRotationMatrix();
-        Eigen::Vector3d euler_angles = C_tv_i.eulerAngles(2, 1, 0);
+        // Eigen's return order in this case is y-p-r. Reverse to match our r-p-y convention
+        Eigen::Vector3d euler_angles = C_tv_i.eulerAngles(2, 1, 0).reverse(); 
         y_check(MahonyMeasurementIndex::roll, i) = euler_angles(MahonyMeasurementIndex::roll) + n_mahony(MahonyMeasurementIndex::roll, i);
         y_check(MahonyMeasurementIndex::pitch, i) = euler_angles(MahonyMeasurementIndex::pitch) + n_mahony(MahonyMeasurementIndex::pitch, i);
 
-        int ind_measurement = 2;
+        int ind_measurement = MahonyMeasurementIndex::NumAngles;
         if (apriltag_avail) {
             Eigen::Vector3d r_t_vt_i = r_check + dz_sigma_points_k(seq(PertIndex::X, PertIndex::Z),i);
             Eigen::Vector3d r_c_tc_i = T_vc_.inverse() * (C_tv_i.transpose() * -r_t_vt_i).homogeneous() +
@@ -518,7 +422,9 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
             Eigen::Quaterniond delta_q_ct_i = delta_q_tv_i.conjugate() * quaternion_exp(n_apriltag.value()(seq(theta_x, theta_z), i));
             Eigen::Vector3d theta_ct_i = quaternion_log(delta_q_ct_i);
 
-            y_check(seq(ind_measurement, ind_measurement + NumAprilTagIndices - 1), i) = r_c_tc_i;
+            y_check(seq(ind_measurement, ind_measurement + AprilTagMeasurementIndex::r_z), i) = r_c_tc_i;
+            y_check(seq(ind_measurement + AprilTagMeasurementIndex::theta_x,
+                        ind_measurement + AprilTagMeasurementIndex::theta_z), i) = r_c_tc_i;
             ind_measurement += NumAprilTagIndices;
         }
         if (v_gps.has_value()) {
@@ -549,13 +455,13 @@ std::tuple<Eigen::VectorXd, Eigen::MatrixXd> RelativePoseFilter::CorrectionStep(
     y_observed(MahonyMeasurementIndex::roll) = roll_mahony;
     y_observed(MahonyMeasurementIndex::pitch) = pitch_mahony;
 
-    int ind_measurement = 2;
+    int ind_measurement = MahonyMeasurementIndex::NumAngles;
     if (apriltag_avail) {
         // Calculate observed perturbations in AprilTag orientation measurement
-        Eigen::Quaterniond delta_q_obs = q_check * q_vc_ * q_ct.value();
+        Eigen::Quaterniond delta_q_obs = q_check * q_vc_ * apriltag_detection->orientation;
         Eigen::Vector3d theta_obs = quaternion_log(delta_q_obs);
 
-        y_observed(seq(ind_measurement + r_x, ind_measurement + r_z)) = r_c_tc.value();
+        y_observed(seq(ind_measurement + r_x, ind_measurement + r_z)) = apriltag_detection->position;
         y_observed(seq(ind_measurement + AprilTagMeasurementIndex::theta_x,
                         ind_measurement + AprilTagMeasurementIndex::theta_z)) = theta_obs;
         ind_measurement += NumAprilTagIndices;

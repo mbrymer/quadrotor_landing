@@ -18,6 +18,8 @@
 #include <optional>
 #include <quaternion_helper.h>
 #include <mahony_filter.h>
+#include <relative_pose_utils.h>
+#include <apriltag_detection.h>
 
 using Eigen::seq;
 
@@ -36,14 +38,15 @@ class RelativePoseFilter
         // Mutexes
         std::mutex mtx_IMU_;
         std::mutex mtx_apriltag_;
+        std::mutex mtx_gps_speed_;
         std::mutex mtx_state_;
 
         // Storage
         // Inputs
         Eigen::Vector3d IMU_accel_;
         Eigen::Vector3d IMU_ang_vel_;
-        Eigen::Vector3d apriltag_pos_;
-        Eigen::Quaterniond apriltag_orien_;
+        std::optional<AprilTagDetection> apriltag_detection_;
+        std::optional<double> gps_speed_;
         double apriltag_time_;
 
         // State
@@ -59,8 +62,8 @@ class RelativePoseFilter
         Eigen::Vector3d ab_static_;
         Eigen::Vector3d wb_static_;
 
-        Eigen::Vector3d r_t_vt_obs_;
-        Eigen::Quaterniond q_tv_obs_;
+        std::optional<Eigen::Vector3d> r_t_vt_obs_;
+        std::optional<Eigen::Quaterniond> q_tv_obs_;
 
         // Multirate EKF
         std::vector<Eigen::VectorXd> x_hist_;
@@ -70,20 +73,20 @@ class RelativePoseFilter
         // Filter Parameters
         double update_freq_;
         double dT_nom_;
-        double measurement_freq_;
+        double apriltag_freq_;
         double measurement_delay_;
         double measurement_delay_max_;
         double dyn_measurement_delay_offset_;
         double t_last_update_;
 
         bool est_bias_;
-        bool limit_measurement_freq_;
+        bool limit_apriltag_freq_;
         bool corner_margin_enbl_;
         bool direct_orien_method_;
         bool multirate_filter_;
         bool dynamic_meas_delay_;
 
-        int upd_per_meas_;
+        int upd_per_apriltag_meas_;
         int num_states_;
         int measurement_step_delay_;
 
@@ -134,10 +137,9 @@ class RelativePoseFilter
 
         // Counters/flags
         bool state_initialized_;
-        bool measurement_ready_;
-        bool performed_correction_;
+        bool performed_apriltag_correction_;
         bool filter_active_;
-        int upds_since_correction_;
+        int upds_since_apriltag_correction_;
 
         // Tolerances and constants
         Eigen::Vector3d g_;
@@ -146,11 +148,9 @@ class RelativePoseFilter
         std::tuple<Eigen::VectorXd, Eigen::VectorXd, Eigen::MatrixXd, Eigen::Vector3d> PredictionStep(const Eigen::VectorXd& x_km1, const Eigen::MatrixXd& P_km1, const Eigen::VectorXd& u);
         std::tuple<Eigen::VectorXd, Eigen::MatrixXd> CorrectionStep(const Eigen::VectorXd& x_check, const Eigen::VectorXd& mu_check,
                                                             const Eigen::MatrixXd& P_check, double roll_mahony, double pitch_mahony,
-                                                            std::optional<double> v_gps, const std::optional<Eigen::VectorXd>& r_c_tc,
-                                                            const std::optional<Eigen::Quaterniond>& q_ct, bool valid_detection);
+                                                            std::optional<double> v_gps, const std::optional<AprilTagDetection>& apriltag_detection);
 
-        std::tuple<Eigen::Vector3d, Eigen::Quaterniond> DetectionToPose(const Eigen::Vector3d& apriltag_pos,
-                                                                        const Eigen::Quaterniond& apriltag_orien);
+        std::tuple<Eigen::Vector3d, Eigen::Quaterniond> DetectionToPose(const AprilTagDetection& apriltag_detection);
 
         MahonyFilter mahony_filter_;
 

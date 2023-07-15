@@ -11,6 +11,7 @@
 #include "std_msgs/Header.h"
 #include "sensor_msgs/Imu.h"
 #include "geometry_msgs/Vector3Stamped.h"
+#include "geometry_msgs/TwistStamped.h"
 #include "geometry_msgs/PointStamped.h"
 #include "geometry_msgs/PoseWithCovarianceStamped.h"
 #include "apriltag_ros/AprilTagDetectionArray.h"
@@ -26,7 +27,7 @@ class RelativePoseFilterNode
         
         void IMUSubCallback(const sensor_msgs::Imu &imu_msg);
         void AprilTagSubCallback(const apriltag_ros::AprilTagDetectionArray &apriltag_msg);
-        void GPSSubCallback();
+        void GPSSubCallback(const geometry_msgs::TwistStamped &gps_speed_msg);
 
         void FilterUpdateCallback(const ros::TimerEvent &event);
 
@@ -34,6 +35,7 @@ class RelativePoseFilterNode
 
         std::string IMU_topic_;
         std::string apriltag_topic_;
+        std::string gps_speed_topic_;
 
         std::string rel_pose_topic_;
         std::string rel_pose_report_topic_;
@@ -51,6 +53,7 @@ class RelativePoseFilterNode
 
         ros::Subscriber IMU_sub_;
         ros::Subscriber apriltag_sub_;
+        ros::Subscriber gps_speed_sub_;
 
         ros::Publisher rel_pose_pub_;
         ros::Publisher rel_pose_report_pub_;

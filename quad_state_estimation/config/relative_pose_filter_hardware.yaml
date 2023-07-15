@@ -1,13 +1,14 @@
 # Relative Pose Filter Parameters
 # Rates
 update_freq: 100.0 # Hz
-measurement_freq: 100.0 # Hz
+apriltag_freq: 100.0 # Hz
 measurement_delay: 0.150 # s
 measurement_delay_max: 0.350 # s
 dyn_measurement_delay_offset: 0.085 # s
 
 # Topics
 IMU_topic: "/mavros/imu/data_raw"
+gps_speed_topic: "/mavros/ground_speed/data_raw"
 
 # Noise Values
 Q_a_diag: [0.00025,0.00025,0.00025] # Allan deviation for IMU noise with no motors running
@@ -59,7 +60,7 @@ tag_positions: [0,0,0,
                 -0.314325,0,0]
 
 # Flags/Options
-limit_measurement_freq: False
+limit_apriltag_freq_: False
 corner_margin_enbl: True
 est_bias: True
 direct_orien_method: True

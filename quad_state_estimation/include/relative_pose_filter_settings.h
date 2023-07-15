@@ -87,4 +87,4 @@ enum GPSSpeedNoiseIndex{
     n_vx = 0,
     n_vy = 1,
     NumGPSSpeedNoise = 2,
-}
+};

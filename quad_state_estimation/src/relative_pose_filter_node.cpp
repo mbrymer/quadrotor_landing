@@ -5,12 +5,13 @@
 
 #include "relative_pose_filter_node.h"
 
+#include <apriltag_detection.h>
+
 RelativePoseFilterNode::RelativePoseFilterNode(ros::NodeHandle nh) : node_{nh}
 {
     InitPubSubCallbacks();
     InitPoseFilter();
     // std::cout << "In the constructor" << std::endl;
-
 }
 
 void RelativePoseFilterNode::InitPubSubCallbacks()
@@ -18,6 +19,7 @@ void RelativePoseFilterNode::InitPubSubCallbacks()
     // Load parameters
     node_.param<std::string>("IMU_topic", IMU_topic_, "/drone/imu");
     node_.param<std::string>("apriltag_topic", apriltag_topic_, "/tag_detections");
+    node_.param<std::string>("gps_speed_topic", gps_speed_topic_, "/drone/ground_speed");
     node_.param<std::string>("rel_pose_topic", rel_pose_topic_, "/state_estimation/rel_pose_state");
     node_.param<std::string>("rel_pose_report_topic", rel_pose_report_topic_, "/state_estimation/rel_pose_reported");
     node_.param<std::string>("rel_vel_topic", rel_vel_topic_, "/state_estimation/rel_pose_velocity");
@@ -35,6 +37,7 @@ void RelativePoseFilterNode::InitPubSubCallbacks()
     // Set publishers, subscribers and timers
     IMU_sub_ = node_.subscribe(IMU_topic_,1, &RelativePoseFilterNode::IMUSubCallback, this);
     apriltag_sub_ = node_.subscribe(apriltag_topic_,1, &RelativePoseFilterNode::AprilTagSubCallback, this);
+    gps_speed_sub_ = node_.subscribe(gps_speed_topic_,1, &RelativePoseFilterNode::GPSSubCallback, this);
 
     rel_pose_pub_ = node_.advertise<geometry_msgs::PoseWithCovarianceStamped>(rel_pose_topic_, 1);
     rel_pose_report_pub_ = node_.advertise<geometry_msgs::PoseStamped>(rel_pose_report_topic_, 1);
@@ -55,20 +58,20 @@ void RelativePoseFilterNode::InitPoseFilter()
     double measurement_delay;
     double measurement_delay_max;
     double dyn_measurement_delay_offset;
-    bool limit_measurement_freq;
+    bool limit_apriltag_freq;
     
     node_.param<double>("measurement_freq", measurement_freq, 10.0);
     node_.param<double>("measurement_delay", measurement_delay, 0.010);
     node_.param<double>("measurement_delay_max", measurement_delay_max, 0.200);
     node_.param<double>("dyn_measurement_delay_offset", dyn_measurement_delay_offset, 0.0);
-    node_.param<bool>("limit_measurement_freq", limit_measurement_freq, false);
+    node_.param<bool>("limit_measurement_freq", limit_apriltag_freq, false);
 
     relative_pose_filter_.update_freq_ = update_freq_;
-    relative_pose_filter_.measurement_freq_ = measurement_freq;
+    relative_pose_filter_.apriltag_freq_ = measurement_freq;
     relative_pose_filter_.measurement_delay_ = measurement_delay;
     relative_pose_filter_.measurement_delay_max_ = measurement_delay_max;
     relative_pose_filter_.dyn_measurement_delay_offset_ = dyn_measurement_delay_offset;
-    relative_pose_filter_.limit_measurement_freq_ = limit_measurement_freq;
+    relative_pose_filter_.limit_apriltag_freq_ = limit_apriltag_freq;
 
     node_.param<bool>("est_bias",relative_pose_filter_.est_bias_, true);
     node_.param<bool>("corner_margin_enbl",relative_pose_filter_.corner_margin_enbl_, true);
@@ -148,7 +151,7 @@ void RelativePoseFilterNode::InitPoseFilter()
         }
     }
 
-    relative_pose_filter_.initialize_params();
+    relative_pose_filter_.InitializeParams();
 }
 
 void RelativePoseFilterNode::IMUSubCallback(const sensor_msgs::Imu &imu_msg)
@@ -160,21 +163,28 @@ void RelativePoseFilterNode::IMUSubCallback(const sensor_msgs::Imu &imu_msg)
     relative_pose_filter_.mtx_IMU_.unlock();
 }
 
-void RelativePoseFilterNode::AprilTagSubCallback(const apriltag_ros::AprilTagDetectionArray &apriltag_msg)
-{
+void RelativePoseFilterNode::GPSSubCallback(const geometry_msgs::TwistStamped &gps_speed_msg) {
+    // std::cout << "In the GPS speed sub callback" << std::endl;
+    // TODO: Figure out what the correct message type will be on vehicle and update this accordingly
+    relative_pose_filter_.mtx_gps_speed_.lock();
+    Eigen::Vector2d in_plane_speed{gps_speed_msg.twist.linear.x, gps_speed_msg.twist.linear.y};
+    relative_pose_filter_.gps_speed_ = in_plane_speed.norm();
+    relative_pose_filter_.mtx_gps_speed_.unlock();
+}
+
+void RelativePoseFilterNode::AprilTagSubCallback(const apriltag_ros::AprilTagDetectionArray &apriltag_msg) {
     // std::cout << "In the AprilTag sub callback" << std::endl;
-    if(apriltag_msg.detections.size()>0)
+    if(apriltag_msg.detections.size() > 0)
     {
         relative_pose_filter_.mtx_apriltag_.lock();
 
-        relative_pose_filter_.apriltag_pos_ << apriltag_msg.detections[0].pose.pose.pose.position.x,
-            apriltag_msg.detections[0].pose.pose.pose.position.y,apriltag_msg.detections[0].pose.pose.pose.position.z;
-        relative_pose_filter_.apriltag_orien_.w() = apriltag_msg.detections[0].pose.pose.pose.orientation.w;
-        relative_pose_filter_.apriltag_orien_.x() = apriltag_msg.detections[0].pose.pose.pose.orientation.x;
-        relative_pose_filter_.apriltag_orien_.y() = apriltag_msg.detections[0].pose.pose.pose.orientation.y;
-        relative_pose_filter_.apriltag_orien_.z() = apriltag_msg.detections[0].pose.pose.pose.orientation.z;
-        relative_pose_filter_.apriltag_time_ = apriltag_msg.header.stamp.toSec();
-        relative_pose_filter_.measurement_ready_ = true;
+        Eigen::Vector3d position{apriltag_msg.detections[0].pose.pose.pose.position.x,
+            apriltag_msg.detections[0].pose.pose.pose.position.y,apriltag_msg.detections[0].pose.pose.pose.position.z};
+        Eigen::Quaterniond orientation{apriltag_msg.detections[0].pose.pose.pose.orientation.w,
+                                       apriltag_msg.detections[0].pose.pose.pose.orientation.x,
+                                       apriltag_msg.detections[0].pose.pose.pose.orientation.y,
+                                       apriltag_msg.detections[0].pose.pose.pose.orientation.z};
+        relative_pose_filter_.apriltag_detection_ = AprilTagDetection(position, orientation, apriltag_msg.header.stamp.toSec());
 
         if(!relative_pose_filter_.state_initialized_)
         {
@@ -245,7 +255,7 @@ void RelativePoseFilterNode::FilterUpdateCallback(const ros::TimerEvent &event)
         // Prediction length
         geometry_msgs::PointStamped pred_length_msg;
         pred_length_msg.header = new_header;
-        pred_length_msg.point.x = relative_pose_filter_.upds_since_correction_;
+        pred_length_msg.point.x = relative_pose_filter_.upds_since_apriltag_correction_;
 
         // Publish messages
         rel_pose_pub_.publish(rel_pose_msg);
@@ -263,34 +273,37 @@ void RelativePoseFilterNode::FilterUpdateCallback(const ros::TimerEvent &event)
                                                 relative_pose_filter_.q_nom_.z(),relative_pose_filter_.q_nom_.w()));
         tf_broadcast_.sendTransform(tf::StampedTransform(rel_pose_tf, curr_time, pose_parent_frame_name_, pose_frame_name_));
 
-        if (relative_pose_filter_.performed_correction_)
-        {
+        if (relative_pose_filter_.r_t_vt_obs_.has_value() && relative_pose_filter_.q_tv_obs_.has_value()) {
             geometry_msgs::PoseStamped rel_pose_report_msg;
             rel_pose_report_msg.header.stamp = curr_time;
             rel_pose_report_msg.header.frame_id = pose_report_frame_name_;
-            rel_pose_report_msg.pose.position.x = relative_pose_filter_.r_t_vt_obs_(0);
-            rel_pose_report_msg.pose.position.y = relative_pose_filter_.r_t_vt_obs_(1);
-            rel_pose_report_msg.pose.position.z = relative_pose_filter_.r_t_vt_obs_(2);
-            rel_pose_report_msg.pose.orientation.x = relative_pose_filter_.q_tv_obs_.x();
-            rel_pose_report_msg.pose.orientation.y = relative_pose_filter_.q_tv_obs_.y();
-            rel_pose_report_msg.pose.orientation.z = relative_pose_filter_.q_tv_obs_.z();
-            rel_pose_report_msg.pose.orientation.w = relative_pose_filter_.q_tv_obs_.w();
+            rel_pose_report_msg.pose.position.x = relative_pose_filter_.r_t_vt_obs_.value()(0);
+            rel_pose_report_msg.pose.position.y = relative_pose_filter_.r_t_vt_obs_.value()(1);
+            rel_pose_report_msg.pose.position.z = relative_pose_filter_.r_t_vt_obs_.value()(2);
+            rel_pose_report_msg.pose.orientation.x = relative_pose_filter_.q_tv_obs_.value().x();
+            rel_pose_report_msg.pose.orientation.y = relative_pose_filter_.q_tv_obs_.value().y();
+            rel_pose_report_msg.pose.orientation.z = relative_pose_filter_.q_tv_obs_.value().z();
+            rel_pose_report_msg.pose.orientation.w = relative_pose_filter_.q_tv_obs_.value().w();
 
+            rel_pose_report_pub_.publish(rel_pose_report_msg);
+            tf::Transform rel_pose_report_tf;
+            rel_pose_report_tf.setOrigin(tf::Vector3(relative_pose_filter_.r_t_vt_obs_.value()(0),
+                                                    relative_pose_filter_.r_t_vt_obs_.value()(1),
+                                                    relative_pose_filter_.r_t_vt_obs_.value()(2)));
+            rel_pose_report_tf.setRotation(tf::Quaternion(relative_pose_filter_.q_tv_obs_.value().x() ,relative_pose_filter_.q_tv_obs_.value().y(),
+                                                relative_pose_filter_.q_tv_obs_.value().z(), relative_pose_filter_.q_tv_obs_.value().w()));
+            tf_broadcast_.sendTransform(tf::StampedTransform(rel_pose_report_tf, curr_time, pose_parent_frame_name_,
+                                                            pose_report_frame_name_));
+            
+            relative_pose_filter_.r_t_vt_obs_.reset();
+            relative_pose_filter_.q_tv_obs_.reset();
+        }
+        if (relative_pose_filter_.performed_apriltag_correction_)
+        {
             geometry_msgs::PointStamped meas_delay_msg;
             meas_delay_msg.header = new_header;
             meas_delay_msg.point.x = relative_pose_filter_.measurement_delay_curr_;
-
-            rel_pose_report_pub_.publish(rel_pose_report_msg);
             meas_delay_pub_.publish(meas_delay_msg);
-
-            tf::Transform rel_pose_report_tf;
-            rel_pose_report_tf.setOrigin(tf::Vector3(relative_pose_filter_.r_t_vt_obs_(0),
-                                                    relative_pose_filter_.r_t_vt_obs_(1), relative_pose_filter_.r_t_vt_obs_(2)));
-            rel_pose_report_tf.setRotation(tf::Quaternion(relative_pose_filter_.q_tv_obs_.x() ,relative_pose_filter_.q_tv_obs_.y(),
-                                                relative_pose_filter_.q_tv_obs_.z(), relative_pose_filter_.q_tv_obs_.w()));
-            tf_broadcast_.sendTransform(tf::StampedTransform(rel_pose_report_tf, curr_time, pose_parent_frame_name_,
-                                                            pose_report_frame_name_));
-
         }
     }
 
